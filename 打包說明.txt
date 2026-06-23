@@ -1,0 +1,34 @@
+# HikeReel — 打包成 .exe 說明
+# =======================================
+
+# ── 步驟 1：確認套件都有裝 ────────────────
+pip install pyinstaller contextily pyproj rasterio mercantile xyzservices certifi opencv-python gpxpy openpyxl pillow matplotlib numpy
+
+# ── 步驟 2：把以下檔案放在同一資料夾 ──────
+#   gpx_to_video.py
+#   gpx_video_app.py
+#   ffmpeg.exe（選用，放同資料夾即可）
+
+# ── 步驟 3：打包指令（一行，直接貼上執行）──
+# ★ 重點：OpenCV 要用 --collect-all opencv-python（否則 exe 找不到 cv2）
+
+pyinstaller --onefile --windowed --name "HikeReel" --add-data "gpx_to_video.py;." --collect-all cv2 --collect-all contextily --collect-all pyproj --collect-all rasterio --collect-all mercantile --collect-all xyzservices --collect-all certifi --copy-metadata contextily --copy-metadata pyproj --copy-metadata rasterio --hidden-import pyproj.datadir --hidden-import certifi --hidden-import gpxpy --hidden-import gpxpy.gpx --hidden-import openpyxl --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageDraw --hidden-import PIL.ImageFont --hidden-import matplotlib --hidden-import matplotlib.pyplot --hidden-import matplotlib.font_manager --hidden-import matplotlib.collections --hidden-import numpy gpx_video_app.py
+
+# ── 步驟 4：完成後 ──────────────────────────
+# dist\HikeReel.exe
+# 把 exe + locationGPS.xlsx + ffmpeg.exe 放同一資料夾
+# ★ exe 執行路徑不要有中文，否則會報「Could not load PKG archive」
+
+# ── 各 --collect-all 的用途 ────────────────
+# cv2          → OpenCV，缺了會報 No module named 'cv2'
+# contextily   → 下載 OpenStreetMap 底圖
+# pyproj       → 座標轉換
+# rasterio     → 地圖圖磚處理
+# mercantile / xyzservices → 圖磚座標與圖源
+# certifi      → SSL 憑證（下載底圖要用）
+
+# ── 注意事項 ────────────────────────────────
+# 1. exe 只能在 Windows 跑
+# 2. exe 約 300~500MB（含這些套件較大）
+# 3. 首次開啟可能被防毒警告，選「仍要執行」
+# 4. exe 執行路徑必須是純英文（不能有中文資料夾名）

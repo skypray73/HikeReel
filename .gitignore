@@ -1,0 +1,32 @@
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 輸出影片
+*.mp4
+*.avi
+*.mov
+
+# 個人 GPX（含位置資訊，不上傳）
+*.gpx
+
+# 底圖快取
+.contextily_cache/
+
+# 系統檔
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
