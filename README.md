@@ -2,6 +2,20 @@
 
 **HikeReel** 是一個將 GPX 健行軌跡轉換成動態影片的工具，適合上傳至 YouTube Shorts 或 Instagram Reels。
 
+## ⬇️ 下載執行檔（Windows）
+
+> 不需要安裝 Python，下載即用。
+
+**[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
+
+下載內容：
+- `HikeReel.exe` — 主程式（Windows 64位元）
+- `locationGPS.xlsx` — 地標資料庫範本
+
+> 建議同時下載 ffmpeg（見下方說明），以獲得最佳影片品質。
+
+---
+
 ## 功能特色
 
 - 📍 自動下載 OpenStreetMap 底圖
