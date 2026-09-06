@@ -29,7 +29,7 @@ TEXT, DIM, SUCCESS, GOLD, DARK2 = "#eaeaea", "#888899", "#00e676", "#ffc864", "#
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("HikeReel v1.00")
+        self.root.title("HikeReel v1.01")
         self.root.configure(bg=BG)
         self.root.resizable(True, True)
         root.update_idletasks()
@@ -102,9 +102,9 @@ class App:
         canvas.bind_all("<MouseWheel>", _on_scroll)
 
         f = self.frame
-        tk.Label(f, text="HikeReel v1.00", bg=BG, fg=GOLD,
+        tk.Label(f, text="HikeReel v1.01", bg=BG, fg=GOLD,
                  font=("Microsoft JhengHei UI", 20, "bold")).pack(pady=(20,2))
-        tk.Label(f, text="開發：Skypray Huang　　首版日期：2026/6/21　　最新日期：2026/6/21",
+        tk.Label(f, text="開發：Skypray Huang　　首版日期：2026/6/21　　最新日期：2026/9/6",
                  bg=BG, fg=DIM,
                  font=("Microsoft JhengHei UI", 10)).pack(pady=(0,16))
 
