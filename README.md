@@ -1,4 +1,4 @@
-# HikeReel v1.00
+# HikeReel v1.01
 
 **HikeReel** 是一個將 GPX 健行軌跡轉換成動態影片的工具，適合上傳至 YouTube Shorts 或 Instagram Reels。
 
