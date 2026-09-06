@@ -29,10 +29,12 @@ if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     if _os.path.isdir(_proj_data):
         _os.environ.setdefault('PROJ_DATA', _proj_data)
         _os.environ.setdefault('PROJ_LIB', _proj_data)
-    # contextily 的 tile 快取目錄
-    _cache = _os.path.join(_os.path.dirname(sys.executable), '.contextily_cache')
-    _os.makedirs(_cache, exist_ok=True)
-    _os.environ.setdefault('XDG_CACHE_HOME', _os.path.dirname(_cache))
+    # contextily 的 tile 快取目錄（實際生效是在下方 import contextily 後
+    # 呼叫 ctx.set_cache_dir，這裡先算好路徑存起來）
+    _HIKEREEL_TILE_CACHE = _os.path.join(_os.path.dirname(sys.executable), '.contextily_cache')
+    _os.makedirs(_HIKEREEL_TILE_CACHE, exist_ok=True)
+else:
+    _HIKEREEL_TILE_CACHE = None
 
 import numpy as np
 import matplotlib
@@ -131,6 +133,21 @@ try:
     import contextily as ctx
     from pyproj import Transformer
     HAS_CTX = True
+
+    # ── OSM tile 使用政策合規設定 ──────────────────────────
+    # 1) 識別用 User-Agent：OSM 政策要求請求需附上可識別應用程式的
+    #    User-Agent（含聯絡方式/專案連結），不可用預設的匿名字串，
+    #    否則容易被誤判為未識別的自動化流量而遭封鎖。
+    HIKEREEL_UA = "HikeReel/1.0 (+https://github.com/skypray73/HikeReel)"
+    OSM_TILE_HEADERS = {"User-Agent": HIKEREEL_UA}
+
+    # 2) 持久化磁碟快取：同一路線／區域重跑時直接讀快取，不重複跟
+    #    OSM 伺服器要圖磚。打包成 exe 時放在 exe 旁（見上方 _HIKEREEL_TILE_CACHE），
+    #    一般以腳本執行時放在使用者家目錄下。
+    _tile_cache_dir = _HIKEREEL_TILE_CACHE or os.path.join(
+        os.path.expanduser("~"), ".hikereel_tile_cache")
+    os.makedirs(_tile_cache_dir, exist_ok=True)
+    ctx.set_cache_dir(_tile_cache_dir)
 except ImportError:
     pass
 
@@ -392,7 +409,8 @@ def get_basemap(lats, lons, quality_boost=0):
         print(f"   zoom 級別：{z}（路線約 {track_len_km:.1f} km，品質+{quality_boost}）")
 
         img, ext = ctx.bounds2img(W_m, S_m, E_m, N_m, zoom=z,
-                                  source=ctx.providers.OpenStreetMap.Mapnik)
+                                  source=ctx.providers.OpenStreetMap.Mapnik,
+                                  headers=OSM_TILE_HEADERS)
 
         # ext 是 Web Mercator，轉回 WGS84 給 matplotlib 用
         to_4326 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
