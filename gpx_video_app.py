@@ -25,7 +25,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-APP_VERSION = "2.0.3"
+APP_VERSION = "2.0.4"
 RELEASE_DATE = "2026/10/21"
 
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"
@@ -59,7 +59,13 @@ https://github.com/skypray73/HikeReel
 Python（PSF License）、NumPy（BSD）、Matplotlib（PSF-based）、OpenCV（Apache-2.0）、
 Pillow（MIT-CMU）、gpxpy（Apache-2.0）、contextily（BSD）、pyproj（MIT）、rasterio（BSD）、
 mercantile（BSD）、xyzservices（BSD）、certifi（MPL-2.0）、openpyxl（MIT）、
-PyVista（MIT）、VTK（BSD）、truststore（MIT）、FFmpeg（LGPL/GPL，另行安裝）。
+PyVista（MIT）、VTK（BSD）、truststore（MIT）。
+
+━━ FFmpeg（選用，不隨附）━━
+影片編碼可使用 FFmpeg。HikeReel 不內建它；你選擇「同意並下載」時，程式會從 gyan.dev 下載
+FFmpeg Windows 建置（release essentials，GPL v3），以 SHA-256 驗證後只放 ffmpeg.exe 與授權文件到
+HikeReel 資料夾。FFmpeg 是 FFmpeg 專案（https://ffmpeg.org/）的獨立軟體，HikeReel 只把它當外部程式
+呼叫，沒有修改它。
 """
 
 
@@ -816,92 +822,150 @@ class App:
 
 
 def check_ffmpeg_and_start(root):
-    """啟動前檢查 ffmpeg，若無則提示使用者。"""
+    """啟動前檢查 ffmpeg，若無則提示：可直接下載到 HikeReel 資料夾（不需 winget、不用重開），或略過。"""
     import gpx_to_video as gv
 
-    ffmpeg = gv.find_ffmpeg()
-    if ffmpeg:
-        # 有 ffmpeg，直接進主程式
+    if gv.find_ffmpeg():
         App(root)
         return
 
-    # 沒有 ffmpeg，跳出提醒視窗
+    import ffmpeg_download as fd
+    style = ttk.Style(); style.theme_use("clam")
+    style.configure("A.Horizontal.TProgressbar", troughcolor=PANEL, background=ACCENT, thickness=10)
     popup = tk.Toplevel(root)
     popup.title("HikeReel — 未偵測到 ffmpeg")
     popup.configure(bg=BG)
     popup.resizable(True, True)
-    popup.minsize(560, 420)
+    popup.minsize(660, 760)
     popup.grab_set()
-
+    popup.protocol("WM_DELETE_WINDOW", lambda: skip())
     root.update_idletasks()
-    pw, ph = 640, 480
+    pw, ph = 720, 800
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     popup.geometry(f"{pw}x{ph}+{(sw-pw)//2}+{(sh-ph)//2}")
 
-    tk.Label(popup, text="⚠️  未偵測到 ffmpeg",
-             bg=BG, fg="#ffaa44",
-             font=("Microsoft JhengHei UI", 16, "bold")
-             ).pack(pady=(28, 12))
+    tk.Label(popup, text="⚠️  未偵測到 ffmpeg", bg=BG, fg="#ffaa44",
+             font=("Microsoft JhengHei UI", 16, "bold")).pack(pady=(22, 8))
+    tk.Label(popup, bg=BG, fg=TEXT, justify="left", anchor="w", wraplength=640,
+             font=("Microsoft JhengHei UI", 11),
+             text="沒有 ffmpeg 也能產生影片，但會改用內建編碼：速度較慢、相容性較差"
+                  "（部分播放器或 YouTube / IG 可能無法播放或拒絕上傳）、無法使用 NVIDIA GPU 加速。"
+                  "建議安裝 ffmpeg 以獲得最佳效果。").pack(padx=28, pady=(0, 8), fill="x")
 
-    msg = (
-        "沒有 ffmpeg 也能產生影片，\n"
-        "但會改用內建編碼（OpenCV mp4v）：\n\n"
-        "  • 速度較慢\n"
-        "  • 相容性較差（部分播放器可能無法播放）\n"
-        "  • 無法使用 NVIDIA GPU 加速\n\n"
-        "建議安裝 ffmpeg 以獲得最佳效果。"
-    )
-    tk.Label(popup, text=msg, bg=BG, fg=TEXT,
-             font=("Microsoft JhengHei UI", 12),
-             justify="left", anchor="w", wraplength=580
-             ).pack(padx=32, pady=8, fill="both", expand=True)
+    info = tk.Frame(popup, bg=PANEL)
+    info.pack(padx=28, pady=6, fill="x")
+    tk.Label(info, text="下載來源與授權（請先閱讀）", bg=PANEL, fg=GOLD, anchor="w",
+             font=("Microsoft JhengHei UI", 11, "bold")).pack(padx=14, pady=(10, 2), fill="x")
+    size_lbl = tk.Label(info, bg=PANEL, fg=TEXT, justify="left", anchor="w", wraplength=610,
+                        font=("Microsoft JhengHei UI", 10))
+    size_lbl.pack(padx=14, pady=(0, 4), fill="x")
+    dest_dir = fd.target_dir()
+    size_lbl.config(text=(
+        "• 來源：gyan.dev 的 FFmpeg Windows 建置（release essentials，約 110 MB）\n"
+        "• 校驗：下載後用同站提供的 SHA-256 驗證，不符就不安裝\n"
+        f"• 授權：{fd.LICENSE_NAME}。ffmpeg 是 FFmpeg 專案的獨立軟體，不是 HikeReel 的一部分；"
+        "HikeReel 只把它當外部程式呼叫，沒有修改它\n"
+        f"• 安裝位置：{dest_dir}\n"
+        "• 只放 ffmpeg.exe、授權文件（ffmpeg_LICENSE.txt）、來源說明（ffmpeg_SOURCE.txt）；不想用時刪除 ffmpeg.exe 即可\n"
+        "• 需要網路連線；下載完成後立即可用，不必重新開啟程式"))
+    tk.Label(info, text=f"下載網址：{fd.ZIP_URL}", bg=PANEL, fg=DIM, anchor="w", justify="left", wraplength=610,
+             font=("Consolas", 9)).pack(padx=14, pady=(0, 4), fill="x")
+    link = tk.Label(info, text="開啟下載來源網頁 / FFmpeg 官網（原始碼與說明）", bg=PANEL, fg="#7fb3ff", cursor="hand2",
+                    font=("Microsoft JhengHei UI", 10, "underline"))
+    link.pack(padx=14, pady=(0, 10), anchor="w")
 
+    def open_links(_=None):
+        import webbrowser
+        webbrowser.open(fd.HOMEPAGE)
+        webbrowser.open(fd.FFMPEG_ORG)
+    link.bind("<Button-1>", open_links)
 
-    def install_ffmpeg():
-        import subprocess
+    state = tk.Label(popup, text="", bg=BG, fg=GOLD, font=("Microsoft JhengHei UI", 10, "bold"),
+                     wraplength=640, justify="left")
+    state.pack(padx=28, pady=(6, 0), fill="x")
+    bar = ttk.Progressbar(popup, mode="determinate", maximum=100, style="A.Horizontal.TProgressbar")
+    bar.pack(padx=28, pady=(2, 6), fill="x")
+
+    btn_frame = tk.Frame(popup, bg=BG)
+    btn_frame.pack(side="bottom", pady=(8, 22))
+    busy = {"on": False}
+
+    def finish():
         popup.destroy()
-        # 開一個新命令提示字元執行安裝
+        App(root)
+
+    def skip():
+        if busy["on"]:
+            return
+        finish()
+
+    def install_winget():
+        import subprocess
         try:
-            subprocess.Popen(
-                ["cmd", "/c", "winget install Gyan.FFmpeg & pause"],
-                creationflags=subprocess.CREATE_NEW_CONSOLE
-            )
+            subprocess.Popen(["cmd", "/c", "winget install Gyan.FFmpeg --source winget & pause"],
+                             creationflags=subprocess.CREATE_NEW_CONSOLE)
         except Exception:
-            messagebox.showinfo(
-                "\u63d0\u793a",
-                "\u8acb\u5728\u547d\u4ee4\u63d0\u793a\u5b57\u5143\uff08CMD\uff09\u57f7\u884c\uff1a"
-                "\n\nwinget install Gyan.FFmpeg\n\n"
-                "\u5b89\u88dd\u5b8c\u6210\u5f8c\u91cd\u65b0\u958b\u555f\u7a0b\u5f0f\u3002")
-        # 安裝中不進主程式，讓使用者裝完後重開
+            messagebox.showinfo("提示", "請在命令提示字元執行：\n\nwinget install Gyan.FFmpeg --source winget\n\n"
+                                        "安裝完成後重新開啟程式。", parent=popup)
+            return
+        messagebox.showinfo("提示", "安裝視窗已開啟。完成後請重新開啟 HikeReel。", parent=popup)
         root.destroy()
 
-    def skip_install():
-        popup.destroy()
-        App(root)   # 仍然進入主程式
+    def start_download():
+        busy["on"] = True
+        b_dl.config(state="disabled"); b_skip.config(state="disabled"); b_win.config(state="disabled")
+        q = queue.Queue()
 
-    # 按鈕區固定在底部置中
-    btn_frame = tk.Frame(popup, bg=BG)
-    btn_frame.pack(side="bottom", pady=(8, 24))
+        def work():
+            try:
+                exe = fd.download_ffmpeg(lambda text, frac: q.put(("p", text, frac)))
+                if not fd.verify_works(exe):
+                    raise RuntimeError("ffmpeg.exe 已下載，但無法執行（可能被防毒軟體攔截）。")
+                q.put(("ok", exe, None))
+            except Exception as ex:
+                q.put(("err", str(ex), None))
+        threading.Thread(target=work, daemon=True).start()
 
-    tk.Button(btn_frame,
-              text="✅ 是，立即安裝 ffmpeg",
-              command=install_ffmpeg,
-              bg="#2a6e2a", fg="white",
-              activebackground="#2a6e2a", activeforeground="white",
-              relief="flat", cursor="hand2",
-              font=("Microsoft JhengHei UI", 12, "bold"),
-              padx=18, pady=10
-              ).pack(side="left", padx=(0, 12))
+        def poll():
+            try:
+                while True:
+                    kind, a1, a2 = q.get_nowait()
+                    if kind == "p":
+                        state.config(text=a1, fg=GOLD)
+                        if a2 is None:
+                            bar.config(mode="indeterminate"); bar.start(12)
+                        else:
+                            bar.stop(); bar.config(mode="determinate"); bar["value"] = a2 * 100
+                    elif kind == "ok":
+                        bar.stop(); bar.config(mode="determinate"); bar["value"] = 100
+                        state.config(text=f"✅ ffmpeg 已安裝：{a1}", fg=SUCCESS)
+                        busy["on"] = False
+                        popup.after(1200, finish)
+                        return
+                    else:
+                        bar.stop(); bar.config(mode="determinate"); bar["value"] = 0
+                        state.config(text="❌ " + a1, fg="#ff6666")
+                        busy["on"] = False
+                        b_dl.config(state="normal", text="重試下載"); b_skip.config(state="normal")
+                        b_win.config(state="normal")
+                        return
+            except queue.Empty:
+                pass
+            popup.after(120, poll)
+        poll()
 
-    tk.Button(btn_frame,
-              text="否，繼續使用內建編碼",
-              command=skip_install,
-              bg="#2a2a4a", fg=TEXT,
-              activebackground="#2a2a4a", activeforeground=TEXT,
-              relief="flat", cursor="hand2",
-              font=("Microsoft JhengHei UI", 12),
-              padx=18, pady=10
-              ).pack(side="left")
+    b_dl = tk.Button(btn_frame, text="⬇ 同意並下載 ffmpeg", command=start_download, bg="#2a6e2a", fg="white",
+                     activebackground="#2a6e2a", activeforeground="white", relief="flat", cursor="hand2",
+                     font=("Microsoft JhengHei UI", 12, "bold"), padx=16, pady=10)
+    b_dl.pack(side="left", padx=(0, 10))
+    b_win = tk.Button(btn_frame, text="用 winget 安裝", command=install_winget, bg="#2a2a4a", fg=TEXT,
+                      activebackground="#2a2a4a", activeforeground=TEXT, relief="flat", cursor="hand2",
+                      font=("Microsoft JhengHei UI", 11), padx=14, pady=10)
+    b_win.pack(side="left", padx=(0, 10))
+    b_skip = tk.Button(btn_frame, text="略過，用內建編碼", command=skip, bg="#2a2a4a", fg=TEXT,
+                       activebackground="#2a2a4a", activeforeground=TEXT, relief="flat", cursor="hand2",
+                       font=("Microsoft JhengHei UI", 11), padx=14, pady=10)
+    b_skip.pack(side="left")
 
 
 def main():

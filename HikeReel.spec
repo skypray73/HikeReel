@@ -6,7 +6,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 datas = []
 binaries = []
 hiddenimports = [
-    'gpx_to_video', 'terrain3d', 'landmark_photos',
+    'gpx_to_video', 'terrain3d', 'landmark_photos', 'ffmpeg_download',
     'pyproj.datadir', 'certifi', 'truststore', 'gpxpy', 'gpxpy.gpx', 'openpyxl',
     'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont', 'PIL.ImageOps', 'PIL.ImageTk',
     'matplotlib', 'matplotlib.pyplot', 'matplotlib.font_manager', 'matplotlib.collections', 'numpy',

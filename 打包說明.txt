@@ -29,5 +29,5 @@ pyinstaller --noconfirm HikeReel.spec
 # ── 注意事項 ────────────────────────────────
 # 1. 只能在 Windows 執行
 # 2. 3D 模式需要支援 OpenGL 的顯示卡（內顯即可）與使用者自己的 ArcGIS 金鑰
-# 3. ffmpeg 不隨附（授權與體積考量），請使用者自行安裝：winget install Gyan.FFmpeg
+# 3. ffmpeg 不隨附（授權與體積考量），請使用者自行安裝：winget install Gyan.FFmpeg --source winget
 # 4. 首次開啟可能被防毒或 SmartScreen 警告，選「仍要執行」

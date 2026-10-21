@@ -1,4 +1,4 @@
-# HikeReel v2.0.3
+# HikeReel v2.0.4
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
@@ -12,10 +12,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.0.3_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.0.4_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.0.3/
+HikeReel_v2.0.4/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -23,7 +23,7 @@ HikeReel_v2.0.3/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.3`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.4`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 
@@ -211,7 +211,7 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線" 
 
 ---
 
-## ffmpeg 安裝（強烈建議）
+## ffmpeg（強烈建議）
 
 | | 有 ffmpeg | 沒有 ffmpeg |
 |---|---|---|
@@ -219,13 +219,25 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線" 
 | 速度 | 快（支援 NVIDIA GPU 加速） | 較慢 |
 | YouTube / IG 相容性 | ✅ 完全相容 | ⚠️ 部分平台可能拒絕上傳 |
 
-**方式 A：用 winget 安裝（推薦）**
+### 方式 A：讓 HikeReel 幫你下載（推薦，不需要 winget、不用重新開啟）
+
+第一次啟動若偵測不到 ffmpeg，會跳出提示視窗，按「**同意並下載 ffmpeg**」即可：
+
+- **下載來源**：[gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 的 FFmpeg Windows 建置（release essentials，約 110 MB）。
+- **校驗**：下載後用該站提供的 SHA-256 驗證，不符就不安裝。
+- **授權**：該建置為 **GPL v3**。ffmpeg 是 [FFmpeg 專案](https://ffmpeg.org/)的獨立軟體，**不是 HikeReel 的一部分**；HikeReel 只把它當外部程式呼叫，沒有修改它。
+- **安裝位置**：HikeReel 資料夾（若不能寫入，改放 `%LOCALAPPDATA%\HikeReel\ffmpeg`）。只會放 `ffmpeg.exe`、授權文件 `ffmpeg_LICENSE.txt`、來源說明 `ffmpeg_SOURCE.txt`；不想用時刪除 `ffmpeg.exe` 即可。
+- 需要網路連線；下載完成後立即可用。
+
+### 方式 B：用 winget 安裝
 
 ```
-winget install Gyan.FFmpeg
+winget install Gyan.FFmpeg --source winget
 ```
 
-**方式 B：手動下載**
+> 若出現 `msstore` 來源的憑證錯誤（`0x8a15005e`），請加上 `--source winget`（上面的指令已包含），或改用方式 A。
+
+### 方式 C：手動下載
 
 1. 到 https://www.gyan.dev/ffmpeg/builds/ 下載 `ffmpeg-release-essentials.zip`
 2. 解壓縮，找到 `bin\ffmpeg.exe`
@@ -302,7 +314,7 @@ GPX 軌跡、地標資料庫與地標照片的版權屬於原作者，請確認�
 | PyVista | MIT |
 | VTK | BSD-3-Clause |
 | truststore | MIT |
-| FFmpeg（另行安裝，不隨附） | LGPL-2.1+ / GPL（依編譯方式） |
+| FFmpeg（不隨附；使用者選擇時由程式從 gyan.dev 下載 release essentials 建置） | GPL v3（該建置）；獨立軟體，HikeReel 只以外部程式呼叫、未修改 |
 
 ---
 

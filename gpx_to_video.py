@@ -1135,6 +1135,9 @@ def find_ffmpeg():
     candidates.append(os.path.join(base, "ffmpeg.exe"))
     candidates.append(os.path.join(base, "ffmpeg", "bin", "ffmpeg.exe"))
     candidates.append(os.path.join(base, "ffmpeg", "ffmpeg.exe"))
+    # HikeReel 資料夾不能寫入時，「下載 ffmpeg」會把它放在這裡
+    candidates.append(os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                                   "HikeReel", "ffmpeg", "ffmpeg.exe"))
 
     # 2. PyInstaller 暫存資料夾
     if hasattr(_sys, "_MEIPASS"):

@@ -1,6 +1,15 @@
-## HikeReel v2.0.3（2026/10/21）
+## HikeReel v2.0.4（2026/10/21）
 
-GPX 健行軌跡 → 動態影片。v2.0 新增 **3D 地形飛行模式**與**地標照片**；v2.0.1～v2.0.3 修正問題並改進 3D 畫面。
+GPX 健行軌跡 → 動態影片。v2.0 新增 **3D 地形飛行模式**與**地標照片**；v2.0.1～v2.0.4 修正問題並改進。
+
+### 🔧 v2.0.4 更新
+
+- **一鍵下載 ffmpeg**：第一次啟動若偵測不到 ffmpeg，提示視窗可直接「同意並下載」，不需要 winget、不必重新開啟程式。
+  - 來源：[gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 的 FFmpeg Windows 建置（release essentials，約 110 MB）；下載後以 SHA-256 驗證，不符就不安裝。
+  - 授權：該建置為 **GPL v3**；ffmpeg 是 [FFmpeg 專案](https://ffmpeg.org/)的獨立軟體，不是 HikeReel 的一部分，HikeReel 只以外部程式呼叫、未修改。提示視窗、README、程式內「版權與授權資訊」都有寫明。
+  - 只會放 `ffmpeg.exe`、`ffmpeg_LICENSE.txt`、`ffmpeg_SOURCE.txt` 到 HikeReel 資料夾（不能寫入時放 `%LOCALAPPDATA%\HikeReel\ffmpeg`）；不想用時刪除 `ffmpeg.exe` 即可。
+- 「用 winget 安裝」改為 `winget install Gyan.FFmpeg --source winget`，避開 `msstore` 來源憑證錯誤（`0x8a15005e`）。
+- 地標資料庫 `locationGPS.xlsx` 更新（部分地標改名，例如「停車場」→「三尖峰停車場」、「三尖峰側面」→「拉瓦雷多埡口」）。
 
 ### 🔧 v2.0.3 更新
 
@@ -24,10 +33,10 @@ GPX 健行軌跡 → 動態影片。v2.0 新增 **3D 地形飛行模式**與**�
 
 ### 📥 下載（Windows）
 
-下載下方 **`HikeReel_v2.0.3_Windows.zip`**，**整個解壓縮**到純英文路徑（例如 `D:\HikeReel_v2.0.3`），執行 `HikeReel.exe`。
+下載下方 **`HikeReel_v2.0.4_Windows.zip`**，**整個解壓縮**到純英文路徑（例如 `D:\HikeReel_v2.0.4`），執行 `HikeReel.exe`。
 
 ```
-HikeReel_v2.0.3/
+HikeReel_v2.0.4/
 ├─ HikeReel.exe       主程式
 ├─ _internal/         程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx   地標資料庫範本
@@ -37,7 +46,7 @@ HikeReel_v2.0.3/
 
 > - v2.0 起改為「主程式＋套件資料夾」，主程式本身很小、啟動更快；請保留 `_internal` 資料夾。
 > - 執行檔未經程式碼簽章，Windows SmartScreen 可能顯示警告，請按「其他資訊」→「仍要執行」。
-> - 建議安裝 ffmpeg：`winget install Gyan.FFmpeg`。
+> - 建議安裝 ffmpeg：`winget install Gyan.FFmpeg --source winget`。
 > - 執行檔由 GitHub Actions 依本儲存庫原始碼自動編譯。
 
 ### ✨ v2.0 新功能
