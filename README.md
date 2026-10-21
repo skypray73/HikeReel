@@ -73,6 +73,10 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線 T
 
     Sentinel-2 衛星影像解析度約 10 m，近看會偏糊，所以選衛星貼圖時鏡頭預設拉得比較遠、比較高。
     EOX 圖磚服務本身也只免費開放給非商業用途，詳見 [s2maps.eu](https://s2maps.eu)。
+- **登山小人**：目前位置以 3D 登山者表示（登山帽、外套、背包、登山杖），沿路線走路前進；`--marker dot` 可改回紅點。
+- **地標照片**：走到有照片的地標時，小人停下、照片卡片淡入並緩慢推近，預設停留 3 秒（`--photo-seconds`，建議 2.5～3.5 秒）。照片會依 EXIF 轉正並自動裁切成 4:3，支援 JPG / PNG / WebP / HEIC。
+  照片來源（擇一）：在地標庫加一欄「照片」填檔案路徑；或放在地標庫旁的 `landmark_photos` 資料夾（也可用 `--photos` 指定），檔名等於地標名稱（中文或外文那一行皆可），例如 `第一山屋.jpg`、`Rifugio Locatelli.jpg`。
+- **外圍地形與遠景霧化**：主地形外再加一圈範圍約 4 倍的低解析地形，遠處逐漸融入天空，不會像一座孤島（`--no-outer` / `--no-haze` 可關閉）。
 - 參數：`--seconds` 影片長度、`--exaggeration` 地形高度倍率、`--cam-dist` / `--pitch` 鏡頭距離與俯角、`--shift` 畫面垂直偏移、`--width` / `--height` 解析度。
 - 需要 OpenGL（一般顯示卡 / 內顯即可），用 PyVista / VTK 離線渲染，輸出經 ffmpeg 編碼。
 - 公司或學校網路若有 SSL 檢查，安裝 `truststore` 後會自動改用 Windows 系統憑證。

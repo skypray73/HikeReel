@@ -259,9 +259,10 @@ def texture_provider(source):
                                     attribution=" ".join(t["credit"]), max_zoom=t["max_zoom"])
 
 
-def fetch_texture(xmin, ymin, xmax, ymax, source="topo", max_tiles=100):
+def fetch_texture(xmin, ymin, xmax, ymax, source="topo", max_tiles=None):
     if source == "esri":
-        return fetch_esri(xmin, ymin, xmax, ymax, max_tiles=1200)    # 高解析：最多約 1200 張（免費額度每月 200 萬張）
+        return fetch_esri(xmin, ymin, xmax, ymax, max_tiles=max_tiles or 1200)    # 高解析：最多約 1200 張（免費額度每月 200 萬張）
+    max_tiles = max_tiles or 100
     import contextily as ctx
     prov = texture_provider(source)
     from pyproj import Transformer
@@ -282,6 +283,18 @@ def fetch_texture(xmin, ymin, xmax, ymax, source="topo", max_tiles=100):
 
 
 # ── 場景資料 ──────────────────────────────────────────────
+def crop_dem(dem, dext, text):
+    """把高程裁到貼圖也涵蓋的範圍；回傳 (dem, 每欄 Mercator x, 每列 y)。"""
+    ix0, ix1 = max(dext[0], text[0]), min(dext[2], text[1])
+    iy0, iy1 = max(dext[1], text[2]), min(dext[3], text[3])
+    px, py = (dext[2] - dext[0]) / dem.shape[1], (dext[3] - dext[1]) / dem.shape[0]
+    c0, c1 = int(math.ceil((ix0 - dext[0]) / px)), int((ix1 - dext[0]) / px)
+    r0, r1 = int(math.ceil((dext[3] - iy1) / py)), int((dext[3] - iy0) / py)
+    mx = dext[0] + (np.arange(c0, c1) + 0.5) * px
+    my = dext[3] - (np.arange(r0, r1) + 0.5) * py
+    return dem[r0:r1, c0:c1], mx, my
+
+
 class Scene:
     def __init__(self, data, texture="topo", exaggeration=1.5):
         lats, lons = data["lats"], data["lons"]
@@ -296,17 +309,9 @@ class Scene:
         xM, yM = min(dext[2], float(me)), min(dext[3], float(mn))
         tex, text = fetch_texture(xm, ym, xM, yM, texture)
 
-        # 只保留貼圖與高程都涵蓋的範圍
-        ix0, ix1 = max(dext[0], text[0]), min(dext[2], text[1])
-        iy0, iy1 = max(dext[1], text[2]), min(dext[3], text[3])
-        px, py = (dext[2] - dext[0]) / dem.shape[1], (dext[3] - dext[1]) / dem.shape[0]
-        c0, c1 = int(math.ceil((ix0 - dext[0]) / px)), int((ix1 - dext[0]) / px)
-        r0, r1 = int(math.ceil((dext[3] - iy1) / py)), int((dext[3] - iy0) / py)
-        dem = dem[r0:r1, c0:c1]
-        self.mx = dext[0] + (np.arange(c0, c1) + 0.5) * px           # 每欄的 Web Mercator x
-        self.my = dext[3] - (np.arange(r0, r1) + 0.5) * py           # 每列的 y（由北到南）
-        self.dem = dem
+        self.dem, self.mx, self.my = crop_dem(dem, dext, text)        # 只保留貼圖與高程都涵蓋的範圍
         self.tex, self.text = tex, text
+        self.texture, self.bbox = texture, (w, s, e, n)
 
         lat0 = float(lats.mean())
         self.k = math.cos(math.radians(lat0))                        # Mercator 公尺 → 實際公尺
@@ -337,16 +342,44 @@ class Scene:
         return self.sample(X / self.k + self.cx, Y / self.k + self.cy) * self.ex
 
     def build_mesh(self, pv):
-        mx, my = np.meshgrid(self.mx, self.my)                       # (ny, nx)
+        return self._mesh(pv, self.dem, self.mx, self.my, self.tex, self.text)
+
+    def build_outer(self, pv, scale=4.0):
+        """外圍地形：範圍約為主地形的 4 倍、解析度較低，讓地形延伸到地平線，不會像一座孤島。
+        主地形範圍內的外圍網格往下壓，避免低解析地形從主地形穿出來。"""
+        w, s_, e, n = self.bbox
+        cxd, cyd = (w + e) / 2, (s_ + n) / 2
+        hw, hh = (e - w) / 2 * scale, (n - s_) / 2 * scale
+        W2, E2 = cxd - hw, cxd + hw
+        S2, N2 = max(-84.0, cyd - hh), min(84.0, cyd + hh)
+        print("🌐 下載外圍地形（較低解析）...")
+        dem, dext = fetch_dem(W2, S2, E2, N2, max_px=1024)
+        (mw, ms), (me, mn) = merc(W2, S2), merc(E2, N2)
+        xm, ym = max(dext[0], float(mw)), max(dext[1], float(ms))
+        xM, yM = min(dext[2], float(me)), min(dext[3], float(mn))
+        tex, text = fetch_texture(xm, ym, xM, yM, self.texture,
+                                  max_tiles=300 if self.texture == "esri" else 120)
+        dem, mx, my = crop_dem(dem, dext, text)
+        # 主地形範圍（縮一格）內的點往下壓
+        cell = abs(mx[1] - mx[0])
+        inx = (mx > self.mx.min() + cell) & (mx < self.mx.max() - cell)
+        iny = (my > self.my.min() + cell) & (my < self.my.max() - cell)
+        dem = dem.copy()
+        dem[np.ix_(iny, inx)] -= 60.0
+        self.outer_radius = float(max(np.ptp(mx), np.ptp(my))) * self.k / 2
+        return self._mesh(pv, dem, mx, my, tex, text)
+
+    def _mesh(self, pv, dem, mxs, mys, texim, text):
+        mx, my = np.meshgrid(mxs, mys)                               # (ny, nx)
         X, Y = (mx - self.cx) * self.k, (my - self.cy) * self.k
-        Z = self.dem * self.ex
-        u = (mx - self.text[0]) / (self.text[1] - self.text[0])
-        v = (my - self.text[2]) / (self.text[3] - self.text[2])
+        Z = dem * self.ex
+        u = (mx - text[0]) / (text[1] - text[0])
+        v = (my - text[2]) / (text[3] - text[2])
         grid = pv.StructuredGrid(X.T, Y.T, Z.T)                      # i = 東西、j = 南北
         grid.active_texture_coordinates = np.c_[u.T.ravel(order="F"), v.T.ravel(order="F")]
         grid = grid.extract_surface().compute_normals(point_normals=True, cell_normals=False,
                                                       split_vertices=False)
-        tex = pv.Texture(np.ascontiguousarray(self.tex[::-1]))       # 影像第 0 列在北邊，VTK 以左下為原點
+        tex = pv.Texture(np.ascontiguousarray(texim[::-1]))          # 影像第 0 列在北邊，VTK 以左下為原點
         tex.interpolate = True
         tex.mipmap = True
         return grid, tex
@@ -368,15 +401,15 @@ def gaussian(a, sigma):
     return np.stack([np.convolve(pad[:, i], k, mode="valid") for i in range(a.shape[1])], axis=1)
 
 
-def camera_path(scene, frames, fps, pitch=0.85, dist=1.0):
+def camera_path(scene, s, fps, pitch=0.85, dist=1.0):
     """回傳每幀的 (相機位置, 焦點)：開場俯瞰 → 跟隨飛行 → 結尾拉高俯瞰。"""
     P = np.c_[scene.tx, scene.ty, scene.tz]
     d = scene.data["dists"] * 1000.0
     L = float(d[-1])
     ext = float(max(np.ptp(scene.tx), np.ptp(scene.ty), 1.0))
     back = float(np.clip(L * 0.10, 150, 1800)) * dist
-    ahead = back * 0.3                                   # 注視點貼近目前位置，紅點固定在畫面中段
-    hgt = back * pitch + 90 * scene.ex
+    ahead = back * 0.15                                  # 注視點鎖定目前位置：小人固定在畫面中段（地平線靠較低的鏡頭角度帶出來）
+    hgt = back * pitch + 40 * scene.ex                   # pitch 越小越水平，越能看出地形起伏
 
     def P_at(s):
         s = np.asarray(s, float)
@@ -393,23 +426,31 @@ def camera_path(scene, frames, fps, pitch=0.85, dist=1.0):
         out[hi, :2] = P[-1, :2] + h1 * (s[hi, None] - L)
         return out
 
-    s = np.linspace(0, L, frames)
+    s = np.asarray(s, float)
+    frames = len(s)
     focal = P_at(s + ahead)
-    cam = P_at(s - back)
-    cam[:, 2] = np.maximum(cam[:, 2] + hgt, P_at(s)[:, 2] + hgt)
+    # 鏡頭放在「平滑後的行進方向」正後方。不用「路線往回 N 公尺的點」，否則之字形折返時鏡頭會跑到小人前面回頭看
+    here = P_at(s)
+    hd = P_at(s + back * 0.6)[:, :2] - P_at(s - back * 0.6)[:, :2]
+    hd = gaussian(hd, max(1.0, fps * 1.0))
+    hd /= (np.linalg.norm(hd, axis=1, keepdims=True) + 1e-9)
+    cam = here.copy()
+    cam[:, :2] = here[:, :2] - hd * back
+    cam[:, 2] = np.maximum(scene.terrain_at(cam[:, 0], cam[:, 1]), here[:, 2]) + hgt
     fpm = frames / max(L, 1.0)                           # 每公尺路線對應幾幀：平滑以「距離」計算，影片長短不影響追蹤
     sig = float(np.clip(back * 0.5 * fpm, 1, fps * 1.5))
-    cam, focal = gaussian(cam, sig), gaussian(focal, float(np.clip(back * 0.15 * fpm, 1, fps)))
+    cam, focal = gaussian(cam, sig), gaussian(focal, max(1.0, fps * 0.12))   # 焦點只輕微平滑，小人才不會飄到畫面邊緣
     cam[:, 2] = np.maximum(cam[:, 2], scene.terrain_at(cam[:, 0], cam[:, 1]) + 60 * scene.ex)
 
     # 視線遮擋：鏡頭 → 目前位置 之間若有山擋住，就把鏡頭拉高到看得見
     tgt = P_at(s)
     tgt[:, 2] += 10 * scene.ex
-    ts = np.linspace(0.04, 0.96, 40)
+    ts = np.linspace(0.04, 0.9, 40)
     lx = cam[:, None, 0] * (1 - ts) + tgt[:, None, 0] * ts
     ly = cam[:, None, 1] * (1 - ts) + tgt[:, None, 1] * ts
     lz = cam[:, None, 2] * (1 - ts) + tgt[:, None, 2] * ts
-    terr = scene.terrain_at(lx.ravel(), ly.ravel()).reshape(lx.shape) + 25 * scene.ex
+    margin = 20 * scene.ex * (1 - ts)                    # 安全距離越接近目前位置越小，否則一直被判定「被擋住」而把鏡頭拉太高
+    terr = scene.terrain_at(lx.ravel(), ly.ravel()).reshape(lx.shape) + margin
     need = np.max(np.maximum(0, terr - lz) / (1 - ts), axis=1)          # 鏡頭需要抬高多少
     win = max(1, int(sig * 1.5))
     need = np.array([need[max(0, i - win):i + win + 1].max() for i in range(len(need))])
@@ -499,6 +540,199 @@ class Landmarks:
         return np.asarray(im)
 
 
+# ── 登山小人 ──────────────────────────────────────────────
+def _mat(R=None, t=(0, 0, 0), sc=1.0):
+    M = np.eye(4)
+    if R is not None:
+        M[:3, :3] = R
+    M[:3, :3] *= sc
+    M[:3, 3] = t
+    return M
+
+
+def _rz(a):
+    c, s_ = math.cos(a), math.sin(a)
+    return np.array([[c, -s_, 0], [s_, c, 0], [0, 0, 1]])
+
+
+def _ry(a):                                              # 繞左右軸（y）擺動：腳、手臂前後擺
+    c, s_ = math.cos(a), math.sin(a)
+    return np.array([[c, 0, s_], [0, 1, 0], [-s_, 0, c]])
+
+
+class Hiker:
+    """用簡單幾何組成的登山者：登山帽、外套、背包、長褲、登山鞋、兩支登山杖。
+    區域座標：x = 前方、y = 左方、z = 上方，身高約 1.8 單位，再整體放大到在畫面中看得清楚。"""
+    JACKET, PANTS, BOOT, SKIN, HAT = "#e8572a", "#3a4150", "#5a3a22", "#f0c8a0", "#2f6b4f"
+    PACK, PACK2, POLE = "#2b6cb0", "#1f4f85", "#c9ced6"
+
+    def __init__(self, pl, pv, size):
+        self.S = size / 1.8
+        self.parts = []                                  # (actor, 局部 4x4, 擺動類型)
+
+        def add(mesh, color, kind=None, pivot=(0, 0, 0)):
+            act = pl.add_mesh(mesh, color=color, smooth_shading=True, ambient=0.35, diffuse=0.8)
+            self.parts.append((act, np.array(pivot, float), kind))
+
+        # 腳（從髖關節往下），各自繞髖關節擺動
+        for side, kind in ((0.11, "legL"), (-0.11, "legR")):
+            add(pv.Cylinder(center=(0, 0, -0.42), direction=(0, 0, 1), radius=0.085, height=0.84), self.PANTS,
+                kind, (0, side, 0.95))
+            add(pv.Box(bounds=(-0.06, 0.2, -0.07, 0.07, -0.95, -0.82)), self.BOOT, kind, (0, side, 0.95))
+        # 身體、頭、帽子、背包（固定）
+        add(pv.Cylinder(center=(0, 0, 1.25), direction=(0, 0, 1), radius=0.2, height=0.62), self.JACKET)
+        add(pv.Sphere(radius=0.13, center=(0.02, 0, 1.7)), self.SKIN)
+        add(pv.Cylinder(center=(0.02, 0, 1.79), direction=(0, 0, 1), radius=0.15, height=0.07), self.HAT)
+        add(pv.Cylinder(center=(0.02, 0, 1.84), direction=(0, 0, 1), radius=0.1, height=0.1), self.HAT)
+        add(pv.Box(bounds=(-0.46, -0.16, -0.19, 0.19, 0.98, 1.62)), self.PACK)
+        add(pv.Cylinder(center=(-0.31, 0, 1.68), direction=(0, 1, 0), radius=0.09, height=0.36), self.PACK2)  # 睡墊
+        # 手臂 + 登山杖（從肩膀往下），與同側的腳反向擺動
+        for side, kind in ((0.25, "armL"), (-0.25, "armR")):
+            add(pv.Cylinder(center=(0.05, 0, -0.3), direction=(0.15, 0, -1), radius=0.06, height=0.6), self.JACKET,
+                kind, (0, side, 1.5))
+            add(pv.Cylinder(center=(0.32, 0, -0.78), direction=(0.35, 0, -1), radius=0.02, height=1.15), self.POLE,
+                kind, (0, side, 1.5))
+        self.shadow = pl.add_mesh(pv.Disc(inner=0, outer=0.55, c_res=32), color="black", opacity=0.35, lighting=False)
+        self.phase = 0.0
+
+    def update(self, pos, yaw, walking, fps):
+        if walking:
+            self.phase += 2 * math.pi * 1.0 / fps        # 每秒一個步伐週期（左右各一步）
+        sw = math.sin(self.phase) * (0.45 if walking else 0.0)
+        ang = {"legL": sw, "legR": -sw, "armL": -sw * 0.8, "armR": sw * 0.8}
+        bob = abs(math.cos(self.phase)) * 0.04 if walking else 0.0
+        W = _mat(_rz(yaw), t=(pos[0], pos[1], pos[2] + bob * self.S), sc=self.S)
+        for act, pivot, kind in self.parts:
+            if kind:
+                L = _mat(t=pivot) @ _mat(_ry(ang[kind]))
+            else:
+                L = np.eye(4)
+            act.user_matrix = W @ L
+        self.shadow.user_matrix = _mat(t=(pos[0], pos[1], pos[2] + 0.02 * self.S), sc=self.S)
+
+
+# ── 地標照片 ──────────────────────────────────────────────
+PHOTO_EXT = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp")
+
+
+def landmark_photo_table(path):
+    """地標庫（.xlsx / .csv）裡若有「照片」欄，回傳 {名稱: 照片路徑}（相對路徑以地標庫所在資料夾為準）。"""
+    out = {}
+    try:
+        rows = []
+        if path.lower().endswith((".xlsx", ".xls")):
+            import openpyxl
+            ws = openpyxl.load_workbook(path, data_only=True).active
+            allr = list(ws.iter_rows(values_only=True))
+            head = [str(h).strip().lower() if h else "" for h in allr[0]]
+            rows = [dict(zip(head, r)) for r in allr[1:]]
+        elif path.lower().endswith(".csv"):
+            import csv
+            with open(path, newline="", encoding="utf-8-sig") as f:
+                rows = [{k.strip().lower(): v for k, v in r.items()} for r in csv.DictReader(f)]
+        base = os.path.dirname(os.path.abspath(path))
+        for r in rows:
+            name = next((r[k] for k in ("名稱", "name", "地標", "landmark") if r.get(k)), None)
+            ph = next((r[k] for k in ("照片", "photo", "圖片", "image", "picture") if r.get(k)), None)
+            if name and ph:
+                ph = str(ph).strip()
+                out[str(name)] = ph if os.path.isabs(ph) else os.path.join(base, ph)
+    except Exception:
+        pass
+    return out
+
+
+def find_photo(name, table, folder):
+    """依序找：地標庫的「照片」欄 → 照片資料夾裡檔名等於地標名稱（任一行，不分大小寫）的圖片。"""
+    if name in table and os.path.isfile(table[name]):
+        return table[name]
+    if not folder or not os.path.isdir(folder):
+        return None
+    keys = {name.replace("\n", " ").strip().lower(), name.replace("\n", "").strip().lower()}
+    keys |= {t.strip().lower() for t in name.split("\n") if t.strip()}
+    for f in sorted(os.listdir(folder)):
+        stem, ext = os.path.splitext(f)
+        if ext.lower() in PHOTO_EXT and stem.strip().lower() in keys:
+            return os.path.join(folder, f)
+    return None
+
+
+def open_photo(path):
+    from PIL import ImageOps
+    if path.lower().endswith((".heic", ".heif")):
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except Exception:
+            pass
+    im = Image.open(path)
+    return ImageOps.exif_transpose(im).convert("RGB")             # 依 EXIF 轉正（手機直拍照片）
+
+
+class PhotoCard:
+    """走到地標時顯示的照片卡片：自動依卡片比例置中裁切、淡入淡出、緩慢推近（Ken Burns）。"""
+    ZOOM = 0.08
+
+    def __init__(self, path, name, W, H, scale):
+        from PIL import ImageOps
+        land = W > H
+        pad = int(min(W, H) * 0.035)
+        self.cw = int(W * 0.40) if land else int(W * 0.86)
+        self.ch = int(self.cw * 3 / 4)                               # 4:3 卡片
+        self.x = W - pad - self.cw if land else (W - self.cw) // 2
+        self.y = int(H * 0.12) if land else int(H * 0.13)
+        big = (int(self.cw * (1 + self.ZOOM)), int(self.ch * (1 + self.ZOOM)))
+        self.src = ImageOps.fit(open_photo(path), big, Image.LANCZOS, centering=(0.5, 0.45))   # 略偏上：保留天空與山稜
+        self.lines = name.split("\n")
+        self.scale = scale
+
+    def draw(self, frame, u, alpha):
+        """u：停留進度 0~1；alpha：淡入淡出 0~1。"""
+        if alpha <= 0.01:
+            return frame
+        z = 1 + self.ZOOM * u
+        bw, bh = self.src.size
+        cw, ch = int(bw / z), int(bh / z)
+        x0, y0 = (bw - cw) // 2, int((bh - ch) * 0.45)
+        photo = self.src.crop((x0, y0, x0 + cw, y0 + ch)).resize((self.cw, self.ch), Image.LANCZOS)
+        fnt = g.PIL_FONT
+        cap_h = int(fnt.size * 1.35 * len(self.lines) + 16 * self.scale)
+        bd = max(3, int(4 * self.scale))
+        card = Image.new("RGBA", (self.cw + 2 * bd, self.ch + cap_h + 2 * bd), (255, 255, 255, 255))
+        card.paste(photo, (bd, bd))
+        dr = ImageDraw.Draw(card)
+        dr.rectangle([bd, self.ch + bd, self.cw + bd, self.ch + bd + cap_h], fill=(15, 20, 40, 255))
+        for k, t in enumerate(self.lines):
+            dr.text((card.width / 2, self.ch + bd + 8 * self.scale + fnt.size * 1.35 * k), t, font=fnt,
+                    fill=(255, 255, 255) if k == 0 else (200, 205, 225), anchor="ma")
+        mask = Image.new("L", card.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, card.width - 1, card.height - 1], radius=int(14 * self.scale),
+                                               fill=int(255 * alpha))
+        im = Image.fromarray(frame).convert("RGBA")
+        sh = Image.new("RGBA", im.size, (0, 0, 0, 0))               # 陰影
+        ImageDraw.Draw(sh).rounded_rectangle([self.x + 6, self.y + 8, self.x + card.width + 6, self.y + card.height + 8],
+                                             radius=int(14 * self.scale), fill=(0, 0, 0, int(90 * alpha)))
+        im = Image.alpha_composite(im, sh)
+        im.paste(card, (self.x, self.y), mask)
+        return np.asarray(im.convert("RGB"))
+
+
+def build_schedule(L, frames_move, holds):
+    """把「沿路線移動」的幀和「在地標停留」的幀排在一起。
+    holds：[(距離 m, 停留幀數, 物件)]；回傳 (每幀的路線距離, [(開始幀, 結束幀, 物件)])。"""
+    s_move = np.linspace(0, L, frames_move)
+    out, ranges, hi = [], [], 0
+    holds = sorted(holds, key=lambda h: h[0])
+    for v in s_move:
+        while hi < len(holds) and holds[hi][0] <= v:
+            d, n, obj = holds[hi]
+            ranges.append((len(out), len(out) + n, obj))
+            out += [d] * n
+            hi += 1
+        out.append(v)
+    return np.array(out), ranges
+
+
 # ── HUD ───────────────────────────────────────────────────
 def draw_hud(frame, data, idx, width, height, title, credit, prof):
     im = Image.fromarray(frame)
@@ -559,8 +793,17 @@ def slope_colors(data):
 
 
 # ── 主流程 ────────────────────────────────────────────────
+HAZE_HEX = "#c8d8e8"
+HAZE_RGB = np.array([200, 216, 232], np.float32)
+
+
 def render(args):
     import pyvista as pv
+    global vtkFloatArray, vtk_to_numpy
+    from vtkmodules.vtkCommonCore import vtkFloatArray
+    from vtkmodules.util.numpy_support import vtk_to_numpy
+    global cv2
+    import cv2
     pv.global_theme.multi_samples = 4
     data = g.parse_gpx(args.gpx)
     if args.title:
@@ -576,13 +819,10 @@ def render(args):
 
     W, H = args.width + args.width % 2, args.height + args.height % 2
     g.scale_fonts_for(W, H, W > H)
-    frames = max(120, int(args.seconds * args.fps))
+    frames_move = max(120, int(args.seconds * args.fps))
     sat = args.texture.startswith("s2")                     # 10 m 衛星：鏡頭拉遠；Esri 高解析可以拉近
-    dist = args.cam_dist if args.cam_dist is not None else (2.2 if sat else 1.0)     # 衛星影像 10 m 解析度，遠一點比較清楚
-    pitch = args.pitch if args.pitch is not None else (1.0 if sat else 0.85)
-    cam, focal, s, back = camera_path(scene, frames, args.fps, pitch, dist)
-    idx_f = np.interp(s, data["dists"] * 1000.0, np.arange(n))
-
+    dist = args.cam_dist if args.cam_dist is not None else (2.2 if sat else 0.6)     # 衛星影像 10 m 解析度，遠一點比較清楚
+    pitch = args.pitch if args.pitch is not None else (1.0 if sat else 0.42)
     lm = None
     lm_path = args.landmarks
     if lm_path is None:                                          # 預設：程式旁的 locationGPS.xlsx
@@ -594,11 +834,48 @@ def render(args):
         if items:
             lm = Landmarks(scene, items, lift=15 * scene.ex)
 
+    # 地標照片：地標庫的「照片」欄，或照片資料夾裡與地標同名的圖片
+    holds = []
+    if lm and not args.no_photos:
+        table = landmark_photo_table(lm_path)
+        folder = args.photos or os.path.join(os.path.dirname(os.path.abspath(lm_path)), "landmark_photos")
+        hold_n = max(1, int(round(args.photo_seconds * args.fps)))
+        for it in lm.items:
+            ph = find_photo(it["name"], table, folder)
+            if ph:
+                try:
+                    card = PhotoCard(ph, it["name"], W, H, min(W, H) / 720)
+                except Exception as ex:
+                    print(f"   ⚠️  照片無法開啟：{ph}（{ex}）")
+                    continue
+                holds.append((float(data["dists"][it["near"]] * 1000.0), hold_n, card))
+        if holds:
+            print(f"   🖼️  地標照片：{len(holds)} 張，每張停留 {args.photo_seconds:g} 秒")
+    s_sched, photo_ranges = build_schedule(float(data["dists"][-1] * 1000.0), frames_move, holds)
+    frames = len(s_sched)
+    cam, focal, s, back = camera_path(scene, s_sched, args.fps, pitch, dist)
+    idx_f = np.interp(s, data["dists"] * 1000.0, np.arange(n))
+    photo_at = {}
+    hold_w = np.zeros(frames)
+    for a, b, card in photo_ranges:
+        for f in range(a, b):
+            photo_at[f] = (card, (f - a) / max(1, b - a - 1), f - a, b - a)
+            hold_w[f] = 1.0
+    hold_w = np.clip(gaussian(hold_w[:, None], max(1.0, args.fps * 0.3))[:, 0] * 1.25, 0, 1)   # 平順進出
+
     print("\n🏔️  建立 3D 地形...")
     mesh, tex = scene.build_mesh(pv)
     pl = pv.Plotter(off_screen=True, window_size=(W, H))
-    pl.set_background("#cfe3f4", top="#2d5b97")
+    pl.set_background(HAZE_HEX, top="#2d5b97")
     pl.add_mesh(mesh, texture=tex, smooth_shading=True, ambient=0.42, diffuse=0.75, specular=0.0)
+    outer_r = None
+    if not args.no_outer:
+        try:
+            omesh, otex = scene.build_outer(pv)
+            pl.add_mesh(omesh, texture=otex, smooth_shading=True, ambient=0.42, diffuse=0.75, specular=0.0)
+            outer_r = scene.outer_radius
+        except Exception as ex:
+            print(f"   ⚠️  外圍地形下載失敗（{ex}），只顯示主地形")
     pl.remove_all_lights()
     ext = float(max(np.ptp(scene.tx), np.ptp(scene.ty)))
     light = pv.Light(position=(-ext, ext, scene.tz.max() + ext * 0.7), focal_point=(0, 0, 0),
@@ -614,10 +891,19 @@ def render(args):
     pl.add_mesh(route, scalars="rgb", rgb=True, line_width=args.line_width,
                 render_lines_as_tubes=True, lighting=False, name="route")
     rad = max(6.0, back * 0.022)                         # 依鏡頭距離決定大小，拉遠時也看得到
-    marker = pv.Sphere(radius=rad, theta_resolution=24, phi_resolution=24)
-    mact = pl.add_mesh(marker, color="#ff3b5c", lighting=False)
-    halo = pv.Sphere(radius=rad * 1.45, theta_resolution=24, phi_resolution=24)
-    hact = pl.add_mesh(halo, color="white", opacity=0.45, lighting=False)
+    hiker = mact = hact = None
+    if args.marker == "hiker":
+        hiker = Hiker(pl, pv, size=max(12.0, back * 0.06))
+        # 行進方向：用前後各一小段的軌跡算朝向，再平滑，避免小人抖動
+        hx = np.interp(s + 15, data["dists"] * 1000.0, scene.tx) - np.interp(s - 15, data["dists"] * 1000.0, scene.tx)
+        hy = np.interp(s + 15, data["dists"] * 1000.0, scene.ty) - np.interp(s - 15, data["dists"] * 1000.0, scene.ty)
+        yaw = np.unwrap(np.arctan2(hy, hx))
+        yaw = gaussian(yaw[:, None], max(1.0, args.fps * 0.25))[:, 0]
+    else:
+        marker = pv.Sphere(radius=rad, theta_resolution=24, phi_resolution=24)
+        mact = pl.add_mesh(marker, color="#ff3b5c", lighting=False)
+        halo = pv.Sphere(radius=rad * 1.45, theta_resolution=24, phi_resolution=24)
+        hact = pl.add_mesh(halo, color="white", opacity=0.45, lighting=False)
     pl.camera.view_angle = args.fov
     pl.camera.SetWindowCenter(0.0, args.shift)      # 負值 = 把畫面往上推，讓目前位置不被下方儀表板蓋住
 
@@ -646,7 +932,7 @@ def render(args):
 
     print(f"🎬 {W}×{H}，{frames} 幀（{frames / args.fps:.0f} 秒），編碼 {enc}")
     t0 = time.time()
-    done = np.array([0, 0, 0, 255], np.uint8)
+    haze_img = None
     for f in range(frames):
         i = int(round(idx_f[f]))
         r = route.point_data["rgb"]
@@ -654,18 +940,49 @@ def render(args):
         r[:i + 1, 3] = 255
         r[i + 1:] = (230, 230, 255, 110)
         route.point_data["rgb"] = r
-        mp = (float(scene.tx[i]), float(scene.ty[i]), float(scene.tz[i] + rad * 0.8))
-        mact.SetPosition(*mp)
-        hact.SetPosition(*mp)
+        if hiker:
+            fi = idx_f[f]
+            pz = float(np.interp(fi, np.arange(n), scene.tz))
+            pos = (float(np.interp(fi, np.arange(n), scene.tx)), float(np.interp(fi, np.arange(n), scene.ty)), pz)
+            hiker.update(pos, float(yaw[f]), f not in photo_at and 0 < fi < n - 1, args.fps)
+        else:
+            mp = (float(scene.tx[i]), float(scene.ty[i]), float(scene.tz[i] + rad * 0.8))
+            mact.SetPosition(*mp)
+            hact.SetPosition(*mp)
+        # 停留看照片時把畫面平順地移開，小人不被照片卡片擋住（橫式往左、直式往下）
+        hw = hold_w[f]
+        if W > H:
+            pl.camera.SetWindowCenter(0.32 * hw, args.shift)
+        else:
+            pl.camera.SetWindowCenter(0.0, args.shift + 0.55 * hw)
         pl.camera.position = tuple(cam[f])
         pl.camera.focal_point = tuple(focal[f])
         pl.camera.up = (0, 0, 1)
-        pl.camera.clipping_range = (5.0, ext * 8 + 20000)
+        pl.camera.clipping_range = (5.0, (outer_r or ext) * 6 + 20000)
         pl.render()
         img = pl.screenshot(return_img=True)
+        if outer_r and not args.no_haze:                       # 大氣霧化：越遠越淡，地平線自然融入天空
+            zb = vtkFloatArray()
+            pl.ren_win.GetZbufferData(0, 0, W - 1, H - 1, zb)           # 直接讀深度緩衝區（不必再渲染一次）
+            z = vtk_to_numpy(zb).reshape(H, W)[::-2, ::2].astype(np.float32)   # 半解析度計算就夠（霧是平滑的）
+            near, far = pl.camera.clipping_range
+            ndc = 2.0 * z - 1.0
+            d = 2.0 * near * far / (far + near - ndc * (far - near))
+            start, full = outer_r * 0.35, outer_r * 1.6
+            fog = np.clip((d - start) / (full - start), 0, 1) ** 1.3 * 0.75
+            fog[z >= 0.99999] = 0                                     # 天空
+            fog = cv2.resize(fog.astype(np.float32), (W, H), interpolation=cv2.INTER_LINEAR)
+            if haze_img is None:
+                haze_img = np.empty_like(img)
+                haze_img[:] = HAZE_RGB.astype(np.uint8)
+            img = cv2.blendLinear(img, haze_img, 1.0 - fog, fog)
         if lm:
             img = lm.draw(img, pl.renderer, cam[f], i, W, H, min(W, H) / 720)
         img = draw_hud(img, data, i, W, H, data["track_name"], credit, prof)
+        if f in photo_at:
+            card, u, k, nk = photo_at[f]
+            fade = max(1, int(args.fps * 0.3))
+            img = card.draw(img, u, min(1.0, (k + 1) / fade, (nk - k) / fade))
         proc.stdin.write(img.tobytes())
         if f % max(1, frames // 20) == 0:
             el = time.time() - t0
@@ -691,14 +1008,21 @@ def main():
     ap.add_argument("--width", type=int, default=720)
     ap.add_argument("--height", type=int, default=1280)
     ap.add_argument("--fov", type=float, default=50)
-    ap.add_argument("--shift", type=float, default=-0.12, help="畫面垂直偏移（-1~1）")
-    ap.add_argument("--pitch", type=float, default=None, help="跟隨鏡頭高度比（越大越俯視；預設 0.85，衛星 1.0）")
-    ap.add_argument("--cam-dist", type=float, default=None, help="跟隨鏡頭距離倍率（預設 1.0，衛星 2.2）")
+    ap.add_argument("--shift", type=float, default=-0.15, help="畫面垂直偏移（-1~1）")
+    ap.add_argument("--pitch", type=float, default=None, help="跟隨鏡頭高度比（越大越俯視；預設 0.42，Sentinel-2 衛星 1.0）")
+    ap.add_argument("--cam-dist", type=float, default=None, help="跟隨鏡頭距離倍率（預設 0.6，Sentinel-2 衛星 2.2）")
     ap.add_argument("--line-width", type=float, default=7)
     ap.add_argument("--no-gpu", action="store_true")
     ap.add_argument("--landmarks", default=None, help="地標庫（.xlsx / .csv），預設使用程式旁的 locationGPS.xlsx")
     ap.add_argument("--radius", type=float, default=0.5, help="地標篩選半徑（公里）")
     ap.add_argument("--no-landmarks", action="store_true", help="不顯示地標")
+    ap.add_argument("--photos", default=None,
+                    help="地標照片資料夾（檔名 = 地標名稱，例如 第一山屋.jpg）；預設為地標庫旁的 landmark_photos")
+    ap.add_argument("--photo-seconds", type=float, default=3.0, help="每張地標照片停留秒數（建議 2.5~3.5）")
+    ap.add_argument("--no-photos", action="store_true", help="不顯示地標照片")
+    ap.add_argument("--no-outer", action="store_true", help="不加外圍地形")
+    ap.add_argument("--no-haze", action="store_true", help="不加遠景霧化")
+    ap.add_argument("--marker", choices=["hiker", "dot"], default="hiker", help="目前位置標記：登山小人或紅點")
     render(ap.parse_args())
 
 
