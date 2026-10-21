@@ -43,6 +43,25 @@
 
 ---
 
+## 🏔️ 3D 地形飛行模式（實驗中）
+
+類似 Google Earth 的 3D 呈現：把軌跡貼在真實地形上，相機沿路線飛行（開場俯瞰 → 跟隨 → 結尾拉高），走過的路線依坡度上色，並疊上距離 / 海拔 / 爬升儀表板與高度剖面圖。
+
+![3D flight](screenshots/3d_flight.png)
+
+```bash
+pip install pyvista truststore imageio-ffmpeg        # 另需上方的基本套件
+python terrain3d.py examples/玉山主峰.gpx --title "玉山主峰" --texture topo --exaggeration 1.5
+```
+
+- **全部使用開放資料，執行時才上網下載**（並快取在 `~/.hikereel_tile_cache`，同區域重跑不會再下載）：
+  - 地形高程：[AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)（Mapzen Terrarium）
+  - 貼圖：OpenTopoMap（`--texture topo`，等高線版）或 OpenStreetMap（`--texture osm`），影片內自動標示來源
+- 參數：`--seconds` 影片長度、`--exaggeration` 地形高度倍率、`--cam-dist` / `--pitch` 鏡頭距離與俯角、`--shift` 畫面垂直偏移、`--width` / `--height` 解析度。
+- 需要 OpenGL（一般顯示卡 / 內顯即可），用 PyVista / VTK 離線渲染，輸出經 ffmpeg 編碼。
+- 公司或學校網路若有 SSL 檢查，安裝 `truststore` 後會自動改用 Windows 系統憑證。
+- 不使用 Google Earth / Google 地圖的圖資（授權不允許）。
+
 ## 如何取得 GPX 軌跡檔案
 
 推薦使用 **[gpx.studio](https://gpx.studio/)** 線上繪製健行路線並匯出 GPX。
