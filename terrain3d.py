@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 for _s in (sys.stdout, sys.stderr):          # Windows 主控台（cp950）印不出 emoji 時不要當掉
@@ -131,6 +132,86 @@ TEXTURES = {
 }
 
 
+ESRI_URL = "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+TEXTURES["esri"] = dict(
+    label="衛星影像 Esri World Imagery（需自備 ArcGIS 金鑰）", max_zoom=18, license="Esri 使用條款",
+    notice="⚠️  Esri World Imagery：須使用你自己的 ArcGIS Location Platform 金鑰（環境變數 ARCGIS_API_KEY），"
+           "圖磚不會存到硬碟。影片公開分享須保留畫面上的來源標示；開啟營利或商業用途請先確認 Esri 條款。",
+    credit=["Powered by Esri · Imagery: Esri, Vantor, GeoEye, Earthstar Geographics,",
+            "CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community"])
+
+
+def arcgis_key():
+    """讀取 ArcGIS 金鑰：先看環境變數，無效時（例如還沒重開終端機）改讀 Windows 使用者環境變數。不會印出金鑰。"""
+    k = os.environ.get("ARCGIS_API_KEY", "").strip()
+    if k and k.isascii() and len(k) >= 20:
+        return k
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as h:
+            k = str(winreg.QueryValueEx(h, "ARCGIS_API_KEY")[0]).strip()
+            if k.isascii() and len(k) >= 20:
+                return k
+    except Exception:
+        pass
+    return None
+
+
+def fetch_esri(xmin, ymin, xmax, ymax, max_tiles):
+    """Esri World Imagery：只在記憶體下載拼接，不寫入磁碟快取（Esri 不允許匯出圖磚離線使用）。"""
+    from concurrent.futures import ThreadPoolExecutor
+    import io
+    key = arcgis_key()
+    if not key:
+        sys.exit("❌ 找不到 ArcGIS 金鑰。請先在 PowerShell 執行：setx ARCGIS_API_KEY \"你的金鑰\"")
+    from pyproj import Transformer
+    to_ll = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    w, s_ = to_ll.transform(xmin, ymin)
+    e, n = to_ll.transform(xmax, ymax)
+    z = 10
+    for zz in range(10, TEXTURES["esri"]["max_zoom"] + 1):
+        x0, y0 = lonlat_to_tile(w, n, zz)
+        x1, y1 = lonlat_to_tile(e, s_, zz)
+        if (x1 - x0 + 1) * (y1 - y0 + 1) > max_tiles:
+            break
+        z = zz
+    x0, y0 = lonlat_to_tile(w, n, z)
+    x1, y1 = lonlat_to_tile(e, s_, z)
+    nx, ny = x1 - x0 + 1, y1 - y0 + 1
+    print(f"   貼圖：esri，zoom {z}，{nx}×{ny} = {nx * ny} 張圖磚（不快取）")
+
+    def get(xy):
+        tx, ty = xy
+        url = ESRI_URL.format(z=z, x=tx, y=ty) + "?token=" + key
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return xy, np.asarray(Image.open(io.BytesIO(r.read())).convert("RGB"))
+            except urllib.error.HTTPError as ex:
+                if ex.code in (401, 403):
+                    raise RuntimeError(f"ArcGIS 金鑰無效或權限不足（HTTP {ex.code}）") from None
+                time.sleep(1 + attempt)
+            except Exception:
+                time.sleep(1 + attempt)
+        return xy, None
+
+    tiles = [(tx, ty) for ty in range(y0, y1 + 1) for tx in range(x0, x1 + 1)]
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        got = dict(ex.map(get, tiles))
+    ts = next((a.shape[0] for a in got.values() if a is not None), 256)
+    img = np.zeros((ny * ts, nx * ts, 3), np.uint8)
+    for (tx, ty), a in got.items():
+        if a is not None:
+            img[(ty - y0) * ts:(ty - y0 + 1) * ts, (tx - x0) * ts:(tx - x0 + 1) * ts] = a[:ts, :ts]
+    missing = sum(a is None for a in got.values())
+    if missing:
+        print(f"   ⚠️  {missing} 張圖磚下載失敗")
+    a = tile_bounds(x0, y0, z)
+    b = tile_bounds(x1, y1, z)
+    return img, (a[0], b[2], b[1], a[3])              # (xmin, xmax, ymin, ymax)
+
+
 def texture_provider(source):
     import contextily as ctx
     t = TEXTURES[source]
@@ -144,6 +225,8 @@ def texture_provider(source):
 
 
 def fetch_texture(xmin, ymin, xmax, ymax, source="topo", max_tiles=100):
+    if source == "esri":
+        return fetch_esri(xmin, ymin, xmax, ymax, max_tiles=1200)    # 高解析：最多約 1200 張（免費額度每月 200 萬張）
     import contextily as ctx
     prov = texture_provider(source)
     from pyproj import Transformer
@@ -457,7 +540,7 @@ def render(args):
     W, H = args.width + args.width % 2, args.height + args.height % 2
     g.scale_fonts_for(W, H, W > H)
     frames = max(120, int(args.seconds * args.fps))
-    sat = args.texture.startswith("s2")
+    sat = args.texture.startswith("s2")                     # 10 m 衛星：鏡頭拉遠；Esri 高解析可以拉近
     dist = args.cam_dist if args.cam_dist is not None else (2.2 if sat else 1.0)     # 衛星影像 10 m 解析度，遠一點比較清楚
     pitch = args.pitch if args.pitch is not None else (1.0 if sat else 0.85)
     cam, focal, s, back = camera_path(scene, frames, args.fps, pitch, dist)
@@ -563,7 +646,8 @@ def main():
     ap.add_argument("--title", default=None)
     ap.add_argument("--output", default=None)
     ap.add_argument("--texture", choices=list(TEXTURES), default="topo",
-                    help="貼圖：topo / osm / s2-2016（衛星，CC BY 4.0）/ s2-2024（衛星，CC BY-NC-SA 4.0 僅限非商業）")
+                    help="貼圖：topo / osm / s2-2016（衛星，CC BY 4.0）/ s2-2024（衛星，CC BY-NC-SA 4.0 僅限非商業）"
+                         " / esri（高解析衛星，需自備 ArcGIS 金鑰）")
     ap.add_argument("--exaggeration", type=float, default=1.5, help="地形高度誇張倍率")
     ap.add_argument("--seconds", type=float, default=30, help="影片長度（秒）")
     ap.add_argument("--fps", type=int, default=24)

@@ -66,7 +66,12 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線 T
     | `s2-2016` | 衛星影像 Sentinel-2 cloudless **2016** 版（EOX） | **CC BY 4.0**：可商用，須標示來源 |
     | `s2-2024` | 衛星影像 Sentinel-2 cloudless **2024** 版（EOX） | **CC BY-NC-SA 4.0：僅限非商業使用**（開啟營利的影片可能算商業使用），以它製作的影片須以相同條款分享並標示來源；可商用請改用 `s2-2016` |
 
-    衛星影像解析度約 10 m，近看會偏糊，所以選衛星貼圖時鏡頭預設拉得比較遠、比較高。
+    | `esri` | 高解析衛星影像 Esri World Imagery（約 1–2 m） | **需自備 ArcGIS 金鑰**；依 Esri 使用條款，影片須保留畫面上的來源標示，營利或商業用途請先確認 Esri 條款 |
+
+    **使用 Esri（選用）**：到 [ArcGIS Location Platform](https://location.arcgis.com/) 免費註冊，建立 API 金鑰（選「公開應用程式」、只開「底圖」權限），然後在 PowerShell 執行
+    `setx ARCGIS_API_KEY "你的金鑰"`。免費額度每月 200 萬張圖磚，一支影片約用 900 張。金鑰請勿上傳到 GitHub；Esri 圖磚不會快取在硬碟。
+
+    Sentinel-2 衛星影像解析度約 10 m，近看會偏糊，所以選衛星貼圖時鏡頭預設拉得比較遠、比較高。
     EOX 圖磚服務本身也只免費開放給非商業用途，詳見 [s2maps.eu](https://s2maps.eu)。
 - 參數：`--seconds` 影片長度、`--exaggeration` 地形高度倍率、`--cam-dist` / `--pitch` 鏡頭距離與俯角、`--shift` 畫面垂直偏移、`--width` / `--height` 解析度。
 - 需要 OpenGL（一般顯示卡 / 內顯即可），用 PyVista / VTK 離線渲染，輸出經 ffmpeg 編碼。
