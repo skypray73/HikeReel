@@ -411,6 +411,13 @@ def camera_path(scene, s, fps, pitch=0.85, dist=1.0):
     ahead = back * 0.15                                  # 注視點鎖定目前位置：小人固定在畫面中段（地平線靠較低的鏡頭角度帶出來）
     hgt = back * pitch + 40 * scene.ex                   # pitch 越小越水平，越能看出地形起伏
 
+    # 鏡頭跟著「平滑過的路線」走：GPS 軌跡本身有小抖動，直接跟會讓畫面晃
+    step = 2.0
+    dd = np.arange(0.0, L + step, step)
+    Pr = np.stack([np.interp(dd, d, P[:, i]) for i in range(3)], axis=1)
+    Pr = gaussian(Pr, max(25.0, back * 0.15) / step)
+    P, d = Pr, dd
+
     def P_at(s):
         s = np.asarray(s, float)
         out = np.empty((len(s), 3))
@@ -432,15 +439,29 @@ def camera_path(scene, s, fps, pitch=0.85, dist=1.0):
     # 鏡頭放在「平滑後的行進方向」正後方。不用「路線往回 N 公尺的點」，否則之字形折返時鏡頭會跑到小人前面回頭看
     here = P_at(s)
     hd = P_at(s + back * 0.6)[:, :2] - P_at(s - back * 0.6)[:, :2]
-    hd = gaussian(hd, max(1.0, fps * 1.0))
-    hd /= (np.linalg.norm(hd, axis=1, keepdims=True) + 1e-9)
+    hy = np.unwrap(np.arctan2(hd[:, 1], hd[:, 0]))
+    hy = gaussian(hy[:, None], fps * 1.5)[:, 0]
+    # 限制轉向速度（每秒最多 20°）：急轉彎、之字形路段時鏡頭慢慢繞過去，不會被甩出去造成晃動
+    lim = math.radians(20) / fps
+    for i in range(1, len(hy)):
+        hy[i] = hy[i - 1] + np.clip(hy[i] - hy[i - 1], -lim, lim)
+    hy = gaussian(hy[:, None], fps * 0.5)[:, 0]
+    hd = np.c_[np.cos(hy), np.sin(hy)]
     cam = here.copy()
     cam[:, :2] = here[:, :2] - hd * back
-    cam[:, 2] = np.maximum(scene.terrain_at(cam[:, 0], cam[:, 1]), here[:, 2]) + hgt
+    cam[:, 2] = here[:, 2] + hgt
     fpm = frames / max(L, 1.0)                           # 每公尺路線對應幾幀：平滑以「距離」計算，影片長短不影響追蹤
-    sig = float(np.clip(back * 0.5 * fpm, 1, fps * 1.5))
-    cam, focal = gaussian(cam, sig), gaussian(focal, max(1.0, fps * 0.12))   # 焦點只輕微平滑，小人才不會飄到畫面邊緣
-    cam[:, 2] = np.maximum(cam[:, 2], scene.terrain_at(cam[:, 0], cam[:, 1]) + 60 * scene.ex)
+    sig = float(np.clip(back * 0.5 * fpm, fps * 0.6, fps * 1.5))
+    cam, focal = gaussian(cam, sig), gaussian(focal, fps * 0.5)
+
+    def env(v, w, sg):                                   # 往上包絡再平滑：保證夠高，又不會一格一格跳
+        w = max(1, int(w))
+        v = np.array([v[max(0, i - w):i + w + 1].max() for i in range(len(v))])
+        return gaussian(v[:, None], max(1.0, sg))[:, 0]
+
+    floor_z = env(scene.terrain_at(cam[:, 0], cam[:, 1]) + 60 * scene.ex, fps, fps * 0.8)
+    cam[:, 2] = gaussian(np.maximum(cam[:, 2], floor_z)[:, None], fps * 0.8)[:, 0]
+    cam[:, 2] = np.maximum(cam[:, 2], floor_z)
 
     # 視線遮擋：鏡頭 → 目前位置 之間若有山擋住，就把鏡頭拉高到看得見
     tgt = P_at(s)
@@ -452,9 +473,7 @@ def camera_path(scene, s, fps, pitch=0.85, dist=1.0):
     margin = 20 * scene.ex * (1 - ts)                    # 安全距離越接近目前位置越小，否則一直被判定「被擋住」而把鏡頭拉太高
     terr = scene.terrain_at(lx.ravel(), ly.ravel()).reshape(lx.shape) + margin
     need = np.max(np.maximum(0, terr - lz) / (1 - ts), axis=1)          # 鏡頭需要抬高多少
-    win = max(1, int(sig * 1.5))
-    need = np.array([need[max(0, i - win):i + win + 1].max() for i in range(len(need))])
-    cam[:, 2] += gaussian(need[:, None], max(1.0, sig * 0.6))[:, 0]
+    cam[:, 2] += env(need, max(sig * 1.5, fps * 1.2), max(sig, fps * 0.8))
 
     # 總覽鏡頭（從南方看向北方，高處）
     center = np.array([np.mean(scene.tx), np.mean(scene.ty), np.mean(scene.tz)])
