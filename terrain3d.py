@@ -534,6 +534,9 @@ def camera_path(scene, s, fps, pitch=0.85, dist=1.0, n_outro=None, aspect=16 / 9
 
 
 # ── 地標 ──────────────────────────────────────────────────
+LABEL_LOG = None                                     # 測試用：記錄每幀標籤位置
+
+
 class Landmarks:
     """地標（locationGPS.xlsx）：每幀投影到畫面上，被山擋住就淡出，走到附近時換成醒目顏色。"""
 
@@ -547,6 +550,7 @@ class Landmarks:
             self.items.append(dict(name=str(name).replace("\\n", "\n"), x=x, y=y, z=z + lift,
                                    near=near, alpha=0.0))
         self.scene = scene
+        self.cache = {}
 
     def visible(self, cam, it):
         ts = np.linspace(0.05, 0.95, 30)
@@ -555,46 +559,96 @@ class Landmarks:
         lz = cam[2] * (1 - ts) + it["z"] * ts
         return bool(np.all(self.scene.terrain_at(lx, ly) < lz))
 
+    def _sprite(self, it, here, passed, scale):
+        """把一個標籤（框、文字、支柱、圖釘）畫成小圖片，只畫一次後快取。
+        以 2 倍解析度繪製再縮小，邊緣平滑；之後每幀用浮點座標平移貼上，移動時字形不會因四捨五入而顫動。"""
+        key = (it["name"], here, passed)
+        if key in self.cache:
+            return self.cache[key]
+        ss = 2
+        sc = scale * ss
+        fnt = g.PIL_FONT_SM.font_variant(size=g.PIL_FONT_SM.size * ss)    # 大小固定：走到附近只換顏色，不放大
+        lines = it["name"].split("\n")
+        tmp = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        tw = max(tmp.textlength(t, font=fnt) for t in lines)
+        lh = fnt.size * 1.2
+        bw, bh = tw + 16 * sc, lh * len(lines) + 10 * sc
+        stem, r, pad = 38 * sc, 5 * sc, 4 * ss
+        wsp, hsp = int(bw + 2 * pad + 2), int(bh + stem + r + 2 * pad + 2)
+        sp = Image.new("RGBA", (wsp, hsp), (0, 0, 0, 0))
+        d = ImageDraw.Draw(sp)
+        cx = wsp / 2
+        top, bot = pad, pad + bh
+        pin_y = bot + stem
+        fill = (233, 69, 96, 235) if here else ((40, 45, 70, 200) if passed else (15, 20, 40, 200))
+        d.line([(cx, bot), (cx, pin_y)], fill=(255, 255, 255, 220), width=max(2, int(2 * sc)))
+        d.ellipse([cx - r, pin_y - r, cx + r, pin_y + r], fill=(255, 224, 102, 255), outline=(30, 30, 30, 200),
+                  width=max(1, ss))
+        d.rounded_rectangle([cx - bw / 2, top, cx + bw / 2, bot], radius=8 * sc, fill=fill,
+                            outline=(255, 224, 102, 230) if here else None, width=2 * ss)
+        for k, t in enumerate(lines):
+            col = (255, 255, 255, 255) if k == 0 else (200, 205, 225, 255)
+            d.text((cx, top + 5 * sc + lh * k), t, font=fnt, fill=col, anchor="ma")
+        sp = sp.resize((max(1, wsp // ss), max(1, hsp // ss)), Image.LANCZOS)
+        arr = np.asarray(sp).astype(np.float32)
+        arr[..., :3] *= arr[..., 3:4] / 255.0                      # 預乘 alpha，平移內插時邊緣顏色才正確
+        res = (arr, cx / ss, pin_y / ss, bw / ss, bh / ss, top / ss)
+        self.cache[key] = res
+        return res
+
+    @staticmethod
+    def _blit(base, spr, x, y, alpha):
+        """把 RGBA 小圖以浮點座標 (x, y) 疊到 base（float32 RGB），用雙線性分配到相鄰像素 → 次像素平滑移動。"""
+        H, W = base.shape[:2]
+        ix, iy = int(math.floor(x)), int(math.floor(y))
+        fx, fy = x - ix, y - iy
+        h, w = spr.shape[:2]
+        pad = np.zeros((h + 1, w + 1, 4), np.float32)
+        pad[:h, :w] += spr * ((1 - fx) * (1 - fy))
+        pad[:h, 1:] += spr * (fx * (1 - fy))
+        pad[1:, :w] += spr * ((1 - fx) * fy)
+        pad[1:, 1:] += spr * (fx * fy)
+        x0, y0 = max(0, ix), max(0, iy)
+        x1, y1 = min(W, ix + w + 1), min(H, iy + h + 1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        src = pad[y0 - iy:y1 - iy, x0 - ix:x1 - ix]
+        a = (src[..., 3:4] / 255.0) * alpha
+        dst = base[y0:y1, x0:x1]
+        dst[:] = dst * (1 - a) + src[..., :3] * alpha
+
     def draw(self, img, ren, cam, idx, W, H, scale):
-        im = Image.fromarray(img)
-        dr = ImageDraw.Draw(im, "RGBA")
-        placed = []
-        order = sorted(self.items, key=lambda it: -((it["x"] - cam[0]) ** 2 + (it["y"] - cam[1]) ** 2))
-        for it in order:                                         # 遠的先畫，近的蓋在上面
+        base = img.astype(np.float32)
+        cands = []
+        for it in self.items:
             ren.SetWorldPoint(it["x"], it["y"], it["z"], 1.0)
             ren.WorldToDisplay()
             dx, dy, dz = ren.GetDisplayPoint()
             sx, sy = dx, H - dy
             on = 0 < dz < 1 and -50 < sx < W + 50 and 0 < sy < H * 0.78 and self.visible(cam, it)
-            it["alpha"] += ((1.0 if on else 0.0) - it["alpha"]) * 0.25    # 淡入淡出
-            a = it["alpha"]
-            if a < 0.03:
-                continue
             here = abs(idx - it["near"]) <= max(3, len(self.scene.tx) // 60)
             passed = idx > it["near"]
-            fnt = g.PIL_FONT if here else g.PIL_FONT_SM
-            lines = it["name"].split("\n")
-            tw = max(dr.textlength(t, font=fnt) for t in lines)
-            lh = fnt.size * 1.2
-            bw, bh = tw + 16 * scale, lh * len(lines) + 10 * scale
-            stem = 38 * scale
-            bx0, by1 = sx - bw / 2, sy - stem
-            box = [bx0, by1 - bh, bx0 + bw, by1]
-            if any(not (box[2] < p[0] or box[0] > p[2] or box[3] < p[1] or box[1] > p[3]) for p in placed):
-                continue                                         # 跟已畫的標籤重疊就略過
-            placed.append(box)
-            fill = (233, 69, 96, int(235 * a)) if here else ((40, 45, 70, int(200 * a)) if passed
-                                                              else (15, 20, 40, int(200 * a)))
-            dr.line([(sx, sy), (sx, by1)], fill=(255, 255, 255, int(220 * a)), width=max(2, int(2 * scale)))
-            r = 5 * scale
-            dr.ellipse([sx - r, sy - r, sx + r, sy + r], fill=(255, 224, 102, int(255 * a)),
-                       outline=(30, 30, 30, int(200 * a)))
-            dr.rounded_rectangle(box, radius=8 * scale, fill=fill,
-                                 outline=(255, 224, 102, int(230 * a)) if here else None, width=2)
-            for k, t in enumerate(lines):
-                col = (255, 255, 255, int(255 * a)) if k == 0 else (200, 205, 225, int(255 * a))
-                dr.text((sx, by1 - bh + 5 * scale + lh * k), t, font=fnt, fill=col, anchor="ma")
-        return np.asarray(im)
+            spr, ax, ay, bw, bh, top = self._sprite(it, here, passed, scale)
+            x, y = sx - ax, sy - ay
+            box = (x + ax - bw / 2, y + top, x + ax + bw / 2, y + top + bh)
+            dist2 = (it["x"] - cam[0]) ** 2 + (it["y"] - cam[1]) ** 2
+            cands.append((it, on, spr, x, y, box, dist2))
+        # 重疊處理：上一幀已顯示的優先保留，其次近的優先；被擋掉的標籤淡出（不再瞬間消失/出現）
+        cands.sort(key=lambda c: (not c[0].get("shown", False), c[6]))
+        placed = []
+        for it, on, spr, x, y, box, _ in cands:
+            free = not any(not (box[2] < p[0] or box[0] > p[2] or box[3] < p[1] or box[1] > p[3]) for p in placed)
+            show = on and free
+            if show:
+                placed.append(box)
+            it["shown"] = show
+            it["alpha"] += ((1.0 if show else 0.0) - it["alpha"]) * 0.2    # 淡入淡出
+        for it, on, spr, x, y, box, _ in sorted(cands, key=lambda c: -c[6]):  # 遠的先畫
+            if it["alpha"] >= 0.03:
+                self._blit(base, spr, x, y, it["alpha"])
+                if LABEL_LOG is not None:
+                    LABEL_LOG.append((idx, it["name"].splitlines()[0], x, y, it["alpha"]))
+        return np.clip(base, 0, 255).astype(np.uint8)
 
 
 # ── 登山小人 ──────────────────────────────────────────────

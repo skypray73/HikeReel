@@ -1,8 +1,8 @@
-HikeReel v2.0.2（2026/10/21）— GPX 健行軌跡 → 動態影片
+HikeReel v2.0.3（2026/10/21）— GPX 健行軌跡 → 動態影片
 https://github.com/skypray73/HikeReel
 
 【開始使用】
-1. 整個資料夾放在純英文路徑（例如 D:\HikeReel_v2.0.2），不要只複製 HikeReel.exe，
+1. 整個資料夾放在純英文路徑（例如 D:\HikeReel_v2.0.3），不要只複製 HikeReel.exe，
    _internal 資料夾是程式需要的套件，不能刪除或移動。
 2. 執行 HikeReel.exe。第一次開啟若出現 SmartScreen 警告，按「其他資訊」→「仍要執行」。
 3. 建議安裝 ffmpeg（影片品質與相容性較好）：在命令提示字元執行 winget install Gyan.FFmpeg

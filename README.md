@@ -1,4 +1,4 @@
-# HikeReel v2.0.2
+# HikeReel v2.0.3
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
@@ -12,10 +12,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.0.2_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.0.3_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.0.2/
+HikeReel_v2.0.3/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -23,7 +23,7 @@ HikeReel_v2.0.2/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.2`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.3`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 
@@ -58,7 +58,7 @@ HikeReel_v2.0.2/
 - 🖼️ **地標照片**：走到有照片的地標時停下，照片卡片淡入並緩慢推近（預設 3 秒），自動轉正、自動裁切；沒有照片的地標不顯示、不停留
 - 🎨 路線以坡度上色（上坡橘紅、下坡藍青）
 - 📊 動態儀表板：距離 / 海拔 / 累積上坡 / 累積下坡，以及高度剖面圖
-- 📍 自訂地標標籤（locationGPS.xlsx），3D 中被山擋住會自動淡出
+- 📍 自訂地標標籤（locationGPS.xlsx），3D 中被山擋住會自動淡出，快速移動時也平滑不抖動
 - 🎬 多種解析度（720p / 1080p / 2K / 4K，直式 / 橫式）
 - ⚡ GPU 加速（需安裝 ffmpeg + NVIDIA）
 - 🖥️ GUI 視窗介面，支援批次處理多個 GPX
