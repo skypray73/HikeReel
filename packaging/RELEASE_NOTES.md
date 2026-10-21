@@ -1,6 +1,13 @@
-## HikeReel v2.0.4（2026/10/21）
+## HikeReel v2.0.5（2026/10/21）
 
-GPX 健行軌跡 → 動態影片。v2.0 新增 **3D 地形飛行模式**與**地標照片**；v2.0.1～v2.0.4 修正問題並改進。
+GPX 健行軌跡 → 動態影片。v2.0 新增 **3D 地形飛行模式**與**地標照片**；v2.0.1～v2.0.5 修正問題並改進。
+
+### 🔧 v2.0.5 更新
+
+- **ffmpeg 下載大幅加速**：改為優先從 GitHub（gyan.dev 作者 GyanD 的 [codexffmpeg](https://github.com/GyanD/codexffmpeg/releases) 發佈）下載，實測約 **6 MB/s**（110 MB 約 10～20 秒）；原本的 gyan.dev 官網只有約 0.4 MB/s（要 5 分鐘以上，容易卡住）。GitHub 連不上時自動改用 gyan.dev。兩處是**同一個檔案**（SHA-256 相同）。
+- **校驗不降低**：下載後以 SHA-256 驗證，GitHub 公布的值與 gyan.dev 的 `.sha256` 交叉核對，不符就不安裝。
+- **斷線續傳**：卡住或中斷時自動從已下載的位置續傳，並顯示下載速度。
+- 提示視窗、README、程式內「版權與授權資訊」的來源說明同步更新（GPL v3 授權、FFmpeg 為獨立軟體的說明不變）。
 
 ### 🔧 v2.0.4 更新
 
@@ -34,10 +41,10 @@ GPX 健行軌跡 → 動態影片。v2.0 新增 **3D 地形飛行模式**與**�
 
 ### 📥 下載（Windows）
 
-下載下方 **`HikeReel_v2.0.4_Windows.zip`**，**整個解壓縮**到純英文路徑（例如 `D:\HikeReel_v2.0.4`），執行 `HikeReel.exe`。
+下載下方 **`HikeReel_v2.0.5_Windows.zip`**，**整個解壓縮**到純英文路徑（例如 `D:\HikeReel_v2.0.5`），執行 `HikeReel.exe`。
 
 ```
-HikeReel_v2.0.4/
+HikeReel_v2.0.5/
 ├─ HikeReel.exe       主程式
 ├─ _internal/         程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx   地標資料庫範本

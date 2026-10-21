@@ -1,4 +1,4 @@
-# HikeReel v2.0.4
+# HikeReel v2.0.5
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
@@ -12,10 +12,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.0.4_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.0.5_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.0.4/
+HikeReel_v2.0.5/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -23,7 +23,7 @@ HikeReel_v2.0.4/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.4`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.5`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 > - 防毒軟體（例如 Norton）可能把它誤判為「未知／高風險檔案」，說明與回報方式見下方「🛡️ 防毒軟體誤判說明與回報」。
@@ -224,8 +224,9 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線" 
 
 第一次啟動若偵測不到 ffmpeg，會跳出提示視窗，按「**同意並下載 ffmpeg**」即可：
 
-- **下載來源**：[gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 的 FFmpeg Windows 建置（release essentials，約 110 MB）。
-- **校驗**：下載後用該站提供的 SHA-256 驗證，不符就不安裝。
+- **下載來源**：優先從 GitHub 下載 gyan.dev 作者（GyanD）發佈的 [FFmpeg Windows 建置](https://github.com/GyanD/codexffmpeg/releases)（release essentials，約 110 MB，速度快）；GitHub 連不上時改用 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 官網（同一個檔案，但伺服器較慢）。
+- **校驗**：下載後以 SHA-256 驗證（GitHub 公布的值，並與 gyan.dev 的 `.sha256` 交叉核對），不符就不安裝。
+- **斷線續傳**：網路不穩或卡住時會自動從中斷處續傳。
 - **授權**：該建置為 **GPL v3**。ffmpeg 是 [FFmpeg 專案](https://ffmpeg.org/)的獨立軟體，**不是 HikeReel 的一部分**；HikeReel 只把它當外部程式呼叫，沒有修改它。
 - **安裝位置**：HikeReel 資料夾（若不能寫入，改放 `%LOCALAPPDATA%\HikeReel\ffmpeg`）。只會放 `ffmpeg.exe`、授權文件 `ffmpeg_LICENSE.txt`、來源說明 `ffmpeg_SOURCE.txt`；不想用時刪除 `ffmpeg.exe` 即可。
 - 需要網路連線；下載完成後立即可用。
@@ -278,7 +279,7 @@ HikeReel 是用 PyInstaller 打包的 Windows 程式，目前**沒有程式碼�
 - HikeReel 是開源專案，原始碼公開在本儲存庫；Release 的 zip 是由 [GitHub Actions](https://github.com/skypray73/HikeReel/actions) 依原始碼自動建置，Release 說明最後附有 zip 的 **SHA-256**，可核對下載的檔案沒有被更換：
 
   ```
-  Get-FileHash HikeReel_v2.0.4_Windows.zip -Algorithm SHA256
+  Get-FileHash HikeReel_v2.0.5_Windows.zip -Algorithm SHA256
   ```
 
 - 不放心也可以不用 exe，改從原始碼執行（見上方「從原始碼執行」）。
@@ -342,7 +343,7 @@ GPX 軌跡、地標資料庫與地標照片的版權屬於原作者，請確認�
 | PyVista | MIT |
 | VTK | BSD-3-Clause |
 | truststore | MIT |
-| FFmpeg（不隨附；使用者選擇時由程式從 gyan.dev 下載 release essentials 建置） | GPL v3（該建置）；獨立軟體，HikeReel 只以外部程式呼叫、未修改 |
+| FFmpeg（不隨附；使用者選擇時由程式從 GitHub〔GyanD/codexffmpeg〕或 gyan.dev 下載 release essentials 建置） | GPL v3（該建置）；獨立軟體，HikeReel 只以外部程式呼叫、未修改 |
 
 ---
 

@@ -25,7 +25,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-APP_VERSION = "2.0.4"
+APP_VERSION = "2.0.5"
 RELEASE_DATE = "2026/10/21"
 
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"
@@ -836,11 +836,11 @@ def check_ffmpeg_and_start(root):
     popup.title("HikeReel — 未偵測到 ffmpeg")
     popup.configure(bg=BG)
     popup.resizable(True, True)
-    popup.minsize(660, 760)
+    popup.minsize(660, 800)
     popup.grab_set()
     popup.protocol("WM_DELETE_WINDOW", lambda: skip())
     root.update_idletasks()
-    pw, ph = 720, 800
+    pw, ph = 760, 860
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     popup.geometry(f"{pw}x{ph}+{(sw-pw)//2}+{(sh-ph)//2}")
 
@@ -852,31 +852,34 @@ def check_ffmpeg_and_start(root):
                   "（部分播放器或 YouTube / IG 可能無法播放或拒絕上傳）、無法使用 NVIDIA GPU 加速。"
                   "建議安裝 ffmpeg 以獲得最佳效果。").pack(padx=28, pady=(0, 8), fill="x")
 
+    btn_frame = tk.Frame(popup, bg=BG)
+    btn_frame.pack(side="bottom", pady=(8, 22))
     info = tk.Frame(popup, bg=PANEL)
     info.pack(padx=28, pady=6, fill="x")
     tk.Label(info, text="下載來源與授權（請先閱讀）", bg=PANEL, fg=GOLD, anchor="w",
              font=("Microsoft JhengHei UI", 11, "bold")).pack(padx=14, pady=(10, 2), fill="x")
-    size_lbl = tk.Label(info, bg=PANEL, fg=TEXT, justify="left", anchor="w", wraplength=610,
-                        font=("Microsoft JhengHei UI", 10))
+    size_lbl = tk.Label(info, bg=PANEL, fg=TEXT, justify="left", anchor="w", wraplength=680,
+                        font=("Microsoft JhengHei UI", 9))
     size_lbl.pack(padx=14, pady=(0, 4), fill="x")
     dest_dir = fd.target_dir()
     size_lbl.config(text=(
-        "• 來源：gyan.dev 的 FFmpeg Windows 建置（release essentials，約 110 MB）\n"
-        "• 校驗：下載後用同站提供的 SHA-256 驗證，不符就不安裝\n"
+        "• 來源：gyan.dev 作者（GyanD）發佈在 GitHub 的 FFmpeg Windows 建置（release essentials，約 110 MB）；"
+        "GitHub 連不上時改用 gyan.dev 官網\n"
+        "• 校驗：下載後以 SHA-256 驗證（GitHub 公布的值，並與 gyan.dev 的 .sha256 交叉核對），不符就不安裝\n"
         f"• 授權：{fd.LICENSE_NAME}。ffmpeg 是 FFmpeg 專案的獨立軟體，不是 HikeReel 的一部分；"
         "HikeReel 只把它當外部程式呼叫，沒有修改它\n"
         f"• 安裝位置：{dest_dir}\n"
         "• 只放 ffmpeg.exe、授權文件（ffmpeg_LICENSE.txt）、來源說明（ffmpeg_SOURCE.txt）；不想用時刪除 ffmpeg.exe 即可\n"
-        "• 需要網路連線；下載完成後立即可用，不必重新開啟程式"))
-    tk.Label(info, text=f"下載網址：{fd.ZIP_URL}", bg=PANEL, fg=DIM, anchor="w", justify="left", wraplength=610,
-             font=("Consolas", 9)).pack(padx=14, pady=(0, 4), fill="x")
+        "• 需要網路連線；卡住或中斷會自動續傳；完成後立即可用，不必重新開啟程式"))
+    tk.Label(info, text=f"主要來源：{fd.GITHUB_PAGE}\n備援來源：{fd.HOMEPAGE}", bg=PANEL, fg=DIM, anchor="w", justify="left", wraplength=680,
+             font=("Consolas", 8)).pack(padx=14, pady=(0, 4), fill="x")
     link = tk.Label(info, text="開啟下載來源網頁 / FFmpeg 官網（原始碼與說明）", bg=PANEL, fg="#7fb3ff", cursor="hand2",
                     font=("Microsoft JhengHei UI", 10, "underline"))
     link.pack(padx=14, pady=(0, 10), anchor="w")
 
     def open_links(_=None):
         import webbrowser
-        webbrowser.open(fd.HOMEPAGE)
+        webbrowser.open(fd.GITHUB_PAGE)
         webbrowser.open(fd.FFMPEG_ORG)
     link.bind("<Button-1>", open_links)
 
@@ -886,8 +889,6 @@ def check_ffmpeg_and_start(root):
     bar = ttk.Progressbar(popup, mode="determinate", maximum=100, style="A.Horizontal.TProgressbar")
     bar.pack(padx=28, pady=(2, 6), fill="x")
 
-    btn_frame = tk.Frame(popup, bg=BG)
-    btn_frame.pack(side="bottom", pady=(8, 22))
     busy = {"on": False}
 
     def finish():
