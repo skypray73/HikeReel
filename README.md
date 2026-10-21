@@ -43,6 +43,9 @@ HikeReel_v2.0.1/
 ### 3D 地形飛行（Esri 衛星影像、登山小人）
 ![3D flight](screenshots/3d_flight.png)
 
+### 3D 結尾總覽（抵達終點後拉遠，呈現整段軌跡與最終數據）
+![3D ending](screenshots/3d_ending.png)
+
 ---
 
 ## 功能特色
