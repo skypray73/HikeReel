@@ -72,7 +72,7 @@ while _todo:
             _need.add(d)
             _todo.append(_vtk_dll[d][1])
 a.binaries = _other + _keep_pyd + [_vtk_dll[d] for d in sorted(_need)]
-print(f"VTK 精簡：模組 {len(_vtk_pyd)} → {len(_keep_pyd)}，DLL {len(_vtk_dll)} → {len(_need)}")
+print(f"VTK slim: modules {len(_vtk_pyd)} -> {len(_keep_pyd)}, DLLs {len(_vtk_dll)} -> {len(_need)}")
 
 pyz = PYZ(a.pure)
 
