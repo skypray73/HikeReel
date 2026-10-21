@@ -1,4 +1,4 @@
-# HikeReel v2.0
+# HikeReel v2.0.1
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
@@ -12,10 +12,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.0_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.0.1_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.0/
+HikeReel_v2.0.1/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -23,7 +23,7 @@ HikeReel_v2.0/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.1`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 
@@ -91,6 +91,8 @@ HikeReel_v2.0/
 其他 3D 細節：
 - 地形高程來自 [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)，主地形外再加一圈約 4 倍範圍的低解析地形，遠處逐漸融入天空。
 - 鏡頭跟著平滑過的路線、轉向速度有上限（每秒 20°），急轉彎與之字形路段也不會晃動。
+- 開場從整條路線的總覽降到小人身後；結尾在小人抵達終點、停下後，鏡頭才慢慢拉遠約 4 秒（`--outro-seconds`），呈現整段軌跡與最終數據。
+- 儀表板（距離 / 海拔 / 上坡 / 下坡）與高度剖面沿用 2D 模式的配色與版型，底色為半透明。
 - 需要 OpenGL（一般顯示卡 / 內顯即可），使用 PyVista / VTK 離線渲染。
 - 公司或學校網路若有 SSL 檢查，程式會自動改用 Windows 系統憑證（truststore）。
 - 不使用 Google Earth / Google 地圖的圖資（授權不允許）。

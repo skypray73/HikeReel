@@ -430,7 +430,7 @@ def gaussian(a, sigma):
     return np.stack([np.convolve(pad[:, i], k, mode="valid") for i in range(a.shape[1])], axis=1)
 
 
-def camera_path(scene, s, fps, pitch=0.85, dist=1.0):
+def camera_path(scene, s, fps, pitch=0.85, dist=1.0, n_outro=None, aspect=16 / 9, fov=50.0):
     """回傳每幀的 (相機位置, 焦點)：開場俯瞰 → 跟隨飛行 → 結尾拉高俯瞰。"""
     P = np.c_[scene.tx, scene.ty, scene.tz]
     d = scene.data["dists"] * 1000.0
@@ -504,24 +504,33 @@ def camera_path(scene, s, fps, pitch=0.85, dist=1.0):
     need = np.max(np.maximum(0, terr - lz) / (1 - ts), axis=1)          # 鏡頭需要抬高多少
     cam[:, 2] += env(need, max(sig * 1.5, fps * 1.2), max(sig, fps * 0.8))
 
-    # 總覽鏡頭（從南方看向北方，高處）
-    center = np.array([np.mean(scene.tx), np.mean(scene.ty), np.mean(scene.tz)])
-    ov_cam = center + np.array([0.0, -1.25 * ext, 0.95 * ext])
-    ov_cam[2] = max(ov_cam[2], scene.tz.max() + 0.5 * ext)
+    # 總覽鏡頭：從南方斜上方看，距離依畫面比例算好，讓整條路線完整入鏡
+    center = np.array([(scene.tx.min() + scene.tx.max()) / 2, (scene.ty.min() + scene.ty.max()) / 2,
+                       float(np.mean(scene.tz))])
+    radius = 0.5 * float(np.hypot(np.ptp(scene.tx), np.ptp(scene.ty))) * 1.6    # 留空間給儀表板
+    vf = math.radians(fov)
+    hf = 2 * math.atan(math.tan(vf / 2) * aspect)
+    D = radius / math.tan(min(vf, hf) / 2)
+    el = math.radians(62)
+    ov_cam = center + np.array([0.0, -D * math.cos(el), D * math.sin(el)])
+    ov_cam[2] = max(ov_cam[2], scene.tz.max() + 0.3 * radius)
     ov_foc = center
 
     n_in = max(24, int(frames * 0.12))
-    n_out = max(24, int(frames * 0.12))
+    n_out = n_outro if n_outro else max(24, int(frames * 0.12))   # 結尾：只在抵達終點後的那段拉遠
+    ow = np.zeros(frames)                                         # 每幀「總覽」的比重（給畫面偏移用）
     for i in range(n_in):                                        # 開場：從總覽慢慢降到跟隨
         t = smoothstep(i / n_in)
         cam[i] = ov_cam * (1 - t) + cam[i] * t
         focal[i] = ov_foc * (1 - t) + focal[i] * t
+        ow[i] = 1 - t
     for j in range(n_out):                                       # 結尾：拉回總覽
         i = frames - n_out + j
         t = smoothstep(j / max(1, n_out - 1))
         cam[i] = cam[i] * (1 - t) + ov_cam * t
         focal[i] = focal[i] * (1 - t) + ov_foc * t
-    return cam, focal, s, back
+        ow[i] = t
+    return cam, focal, s, back, ow
 
 
 # ── 地標 ──────────────────────────────────────────────────
@@ -660,50 +669,121 @@ class Hiker:
 
 
 # ── HUD ───────────────────────────────────────────────────
+DASH_LABELS = ["距離", "海拔", "↑上坡", "↓下坡"]                 # 與 2D 模式相同
+DASH_COLORS = [(255, 200, 100), (130, 200, 255), (255, 130, 100), (130, 220, 200)]   # #ffc864 #82c8ff #ff8264 #82dcc8
+PANEL_RGBA = (15, 25, 50, 175)                                    # 2D 的 #0f1932，改成半透明
+LABEL_COL, UNIT_COL, TEXT_COL = (200, 200, 224), (180, 180, 200), (234, 234, 234)
+PROFILE_BASE, DONE_COL, ACCENT_COL = (68, 68, 102), (245, 166, 35), (233, 69, 96)
+
+
+def _nice_step(span):
+    for st in (10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000):
+        if span / st <= 6:
+            return st
+    return 5000
+
+
 def draw_hud(frame, data, idx, width, height, title, credit, prof):
-    im = Image.fromarray(frame)
-    dr = ImageDraw.Draw(im, "RGBA")
+    im = Image.fromarray(frame).convert("RGBA")
+    ov = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    dr = ImageDraw.Draw(ov)
+    sc = min(width, height) / 720
     pad = int(min(width, height) * 0.035)
-    # 橫式：資訊列縮窄並靠左（不要拉滿全寬擋住畫面）；直式維持滿版
-    right = width - pad if width <= height else pad + min(width - 2 * pad, int(height * 1.05))
+    land = width > height
+    right = width - pad if not land else pad + min(width - 2 * pad, int(height * 1.1))
+    big, mid, sm = g.PIL_FONT_BIG, g.PIL_FONT, g.PIL_FONT_SM
+
     # 標題
-    tw = dr.textlength(title, font=g.PIL_FONT_BIG)
-    dr.rounded_rectangle([pad, pad, pad + tw + pad, pad + g.PIL_FONT_BIG.size * 1.9],
-                         radius=14, fill=(15, 20, 40, 170))
-    dr.text((pad * 1.5, pad + g.PIL_FONT_BIG.size * 0.35), title, font=g.PIL_FONT_BIG, fill=(255, 255, 255, 255))
-    # 數據
-    i = int(idx)
-    items = [("距離", f"{data['dists'][i]:.2f} km"), ("海拔", f"{data['eles'][i]:.0f} m"),
-             ("累積上坡", f"{prof['gain'][i]:.0f} m"), ("累積下坡", f"{prof['loss'][i]:.0f} m")]
-    bar_h = g.PIL_FONT_BIG.size * 2.6
-    lh = g.PIL_FONT_SM.size * 1.3
+    tw = dr.textlength(title, font=big)
+    dr.rounded_rectangle([pad, pad, pad + tw + pad, pad + big.size * 1.9], radius=int(12 * sc), fill=PANEL_RGBA)
+    dr.text((pad * 1.5, pad + big.size * 0.35), title, font=big, fill=(255, 255, 255, 255))
+
+    # 版面：最下方來源標示 → 高度剖面 → 儀表板
+    lh = sm.size * 1.3
     py1 = height - pad * 0.7 - lh * len(credit)
-    py0 = py1 - height * 0.09
-    y0 = py0 - pad * 0.6 - bar_h
-    dr.rounded_rectangle([pad, y0, right, y0 + bar_h], radius=16, fill=(15, 20, 40, 170))
-    cw = (right - pad) / len(items)
-    for k, (lab, val) in enumerate(items):
-        x = pad + cw * k + cw / 2
-        dr.text((x, y0 + bar_h * 0.18), val, font=g.PIL_FONT_BIG, fill=(255, 255, 255, 255), anchor="ma")
-        dr.text((x, y0 + bar_h * 0.62), lab, font=g.PIL_FONT_SM, fill=(180, 190, 215, 255), anchor="ma")
-    # 高度剖面
-    dr.rounded_rectangle([pad, py0, right, py1], radius=12, fill=(15, 20, 40, 150))
-    xs = pad + (right - pad) * data["dists"] / max(data["dists"][-1], 1e-6)
-    lo, hi = data["ele_min"], max(data["ele_max"], data["ele_min"] + 1)
-    ys = py1 - 8 - (py1 - py0 - 16) * (data["eles"] - lo) / (hi - lo)
-    pts = list(zip(xs[::max(1, len(xs) // 400)], ys[::max(1, len(xs) // 400)]))
-    dr.line(pts, fill=(110, 110, 150, 255), width=3)
-    done = [p for p, k in zip(pts, range(0, len(xs), max(1, len(xs) // 400))) if k <= i]
+    py0 = py1 - (height * (0.24 if land else 0.17))
+    cell_h = big.size + sm.size * 2.9
+    y0 = py0 - pad * 0.5 - cell_h
+
+    # ── 儀表板：4 格，左側色條＋標籤＋彩色數字（2D 模板） ──
+    i = int(idx)
+    e = data["eles"]
+    items = [(f"{data['dists'][i]:.2f}", f"/ {data['total_dist']:.1f} km", None),
+             (f"{e[i]:.0f}", "m", f"▲{data['ele_max']:.0f}  ▼{data['ele_min']:.0f} m"),
+             (f"{prof['gain'][i]:.0f}", f"/ {prof['gain'][-1]:.0f} m", None),
+             (f"{prof['loss'][i]:.0f}", f"/ {prof['loss'][-1]:.0f} m", None)]
+    gap = int(8 * sc)
+    cw = ((right - pad) - gap * 3) / 4
+    for k, ((val, unit, sub), lab, col) in enumerate(zip(items, DASH_LABELS, DASH_COLORS)):
+        x0 = pad + k * (cw + gap)
+        dr.rounded_rectangle([x0, y0, x0 + cw, y0 + cell_h], radius=int(8 * sc), fill=PANEL_RGBA)
+        dr.rectangle([x0, y0 + 4 * sc, x0 + max(3, 5 * sc), y0 + cell_h - 4 * sc], fill=col + (255,))
+        tx = x0 + 12 * sc
+        dr.text((tx, y0 + 6 * sc), lab, font=sm, fill=LABEL_COL + (255,))
+        vy = y0 + 6 * sc + sm.size * 1.25
+        fb = big
+        while dr.textlength(val, font=fb) + dr.textlength(unit, font=sm) + 18 * sc > cw and fb.size > 10:
+            fb = fb.font_variant(size=fb.size - 1)
+        dr.text((tx, vy), val, font=fb, fill=col + (255,))
+        vw = dr.textlength(val, font=fb)
+        dr.text((tx + vw + 4 * sc, vy + fb.size - sm.size), unit, font=sm, fill=UNIT_COL + (255,))
+        if sub:
+            dr.text((tx, vy + fb.size * 1.12), sub, font=sm, fill=(140, 170, 210, 255))
+
+    # ── 高度剖面（2D 模板：標題、座標軸、虛線格線、已走區段填色、目前位置） ──
+    dr.rounded_rectangle([pad, py0, right, py1], radius=int(10 * sc), fill=PANEL_RGBA)
+    dr.text(((pad + right) / 2, py0 + 4 * sc), "高度剖面", font=mid, fill=TEXT_COL + (255,), anchor="ma")
+    ax0 = pad + dr.textlength("0000", font=sm) + 18 * sc                 # 繪圖區
+    ax1 = right - 12 * sc
+    ay0 = py0 + mid.size * 1.5
+    ay1 = py1 - sm.size * 1.9
+    emin, emax = data["ele_min"], data["ele_max"]
+    ypad = (emax - emin) * 0.12 + 20
+    lo, hi = emin - ypad, emax + ypad
+    D = max(data["dists"][-1], 1e-6)
+    X = lambda d: ax0 + (ax1 - ax0) * d / D
+    Y = lambda v: ay1 - (ay1 - ay0) * (v - lo) / (hi - lo)
+    step = _nice_step(hi - lo)
+    v = math.ceil(lo / step) * step
+    while v <= hi:                                                     # 海拔虛線格線＋刻度
+        yy = Y(v)
+        for xx in np.arange(ax0, ax1, 7 * sc):
+            dr.line([(xx, yy), (min(xx + 4 * sc, ax1), yy)], fill=(136, 136, 170, 115), width=1)
+        dr.text((ax0 - 6 * sc, yy), f"{v:.0f}", font=sm, fill=TEXT_COL + (255,), anchor="rm")
+        v += step
+    kstep = next(st for st in (0.5, 1, 2, 2.5, 5, 10, 20, 25, 50) if D / st <= 8)
+    kv = 0.0
+    while kv <= D + 1e-9:                                              # 距離刻度
+        dr.text((X(kv), ay1 + 4 * sc), f"{kv:g}", font=sm, fill=TEXT_COL + (255,), anchor="ma")
+        kv += kstep
+    dr.text((ax1, ay1 + 4 * sc), "km", font=sm, fill=UNIT_COL + (255,), anchor="ra")
+    dr.line([(ax0, ay0), (ax0, ay1), (ax1, ay1)], fill=(42, 42, 74, 255), width=1)
+    n = len(e)
+    stepi = max(1, n // 500)
+    pts = [(X(data["dists"][j]), Y(e[j])) for j in range(0, n, stepi)] + [(X(data["dists"][-1]), Y(e[-1]))]
+    dr.polygon(pts + [(pts[-1][0], ay1), (pts[0][0], ay1)], fill=PROFILE_BASE + (90,))
+    dr.line(pts, fill=PROFILE_BASE + (255,), width=max(1, int(1.5 * sc)))
+    done = [(X(data["dists"][j]), Y(e[j])) for j in range(0, i + 1, stepi)] + [(X(data["dists"][i]), Y(e[i]))]
     if len(done) > 1:
-        dr.line(done, fill=(245, 166, 35, 255), width=4)
-    dr.ellipse([xs[i] - 7, ys[i] - 7, xs[i] + 7, ys[i] + 7], fill=(233, 69, 96, 255), outline=(255, 255, 255, 255))
+        dr.polygon(done + [(done[-1][0], ay1), (done[0][0], ay1)], fill=DONE_COL + (140,))
+        dr.line(done, fill=DONE_COL + (255,), width=max(2, int(3 * sc)))
+    cx, cy = X(data["dists"][i]), Y(e[i])
+    dr.line([(cx, ay0), (cx, ay1)], fill=ACCENT_COL + (255,), width=max(1, int(2 * sc)))
+    r1, r2 = 7 * sc, 4 * sc
+    dr.ellipse([cx - r1, cy - r1, cx + r1, cy + r1], fill=(255, 255, 255, 255))
+    dr.ellipse([cx - r2, cy - r2, cx + r2, cy + r2], fill=ACCENT_COL + (255,))
+    lab = f"{e[i]:.0f} m"
+    lx = cx + 10 * sc if cx + 10 * sc + dr.textlength(lab, font=sm) < ax1 else cx - 10 * sc - dr.textlength(lab, font=sm)
+    dr.text((lx, cy - sm.size * 1.1), lab, font=sm, fill=TEXT_COL + (255,))
+
+    # 來源標示
     for k, line in enumerate(credit):
-        fnt = g.PIL_FONT_SM
+        fnt = sm
         while dr.textlength(line, font=fnt) > width - 2 * pad and fnt.size > 8:
             fnt = fnt.font_variant(size=fnt.size - 1)
         dr.text((width - pad, py1 + pad * 0.35 + lh * (k + 1) - lh * 0.25), line, font=fnt,
                 fill=(255, 255, 255, 200), anchor="rs")
-    return np.asarray(im)
+    return np.asarray(Image.alpha_composite(im, ov).convert("RGB"))
 
 
 def slope_colors(data):
@@ -778,8 +858,13 @@ def render(args, progress=None):
         if holds:
             print(f"   🖼️  地標照片：{len(holds)} 張，每張停留 {args.photo_seconds:g} 秒")
     s_sched, photo_ranges = build_schedule(float(data["dists"][-1] * 1000.0), frames_move, holds)
+    # 結尾：小人走到終點、停下約 0.5 秒後，鏡頭才慢慢拉遠（預設 4 秒）讓整段軌跡入鏡
+    n_pause = int(round(args.fps * 0.5))
+    n_outro = max(1, int(round(args.fps * args.outro_seconds)))
+    s_sched = np.concatenate([s_sched, np.full(n_pause + n_outro, s_sched[-1])])
     frames = len(s_sched)
-    cam, focal, s, back = camera_path(scene, s_sched, args.fps, pitch, dist)
+    cam, focal, s, back, ow = camera_path(scene, s_sched, args.fps, pitch, dist,
+                                          n_outro=n_outro, aspect=W / H, fov=args.fov)
     idx_f = np.interp(s, data["dists"] * 1000.0, np.arange(n))
     photo_at = {}
     hold_w = np.zeros(frames)
@@ -884,10 +969,11 @@ def render(args, progress=None):
             hact.SetPosition(*mp)
         # 停留看照片時把畫面平順地移開，小人不被照片卡片擋住（橫式往左、直式往下）
         hw = hold_w[f]
+        o = float(ow[f])                    # 開場/結尾總覽：把整段路線移到儀表板以外的空白區域
         if W > H:
-            pl.camera.SetWindowCenter(0.32 * hw, args.shift)
+            pl.camera.SetWindowCenter(0.32 * hw - 0.44 * o, args.shift - 0.06 * o)
         else:
-            pl.camera.SetWindowCenter(0.0, args.shift + 0.55 * hw)
+            pl.camera.SetWindowCenter(0.0, args.shift + 0.55 * hw - 0.3 * o)
         pl.camera.position = tuple(cam[f])
         pl.camera.focal_point = tuple(focal[f])
         pl.camera.up = (0, 0, 1)
@@ -965,6 +1051,7 @@ def build_parser():
     ap.add_argument("--no-outer", action="store_true", help="不加外圍地形")
     ap.add_argument("--no-haze", action="store_true", help="不加遠景霧化")
     ap.add_argument("--marker", choices=["hiker", "dot"], default="hiker", help="目前位置標記：登山小人或紅點")
+    ap.add_argument("--outro-seconds", type=float, default=4.0, help="抵達終點後鏡頭拉遠的秒數（建議 3~5）")
     return ap
 
 
