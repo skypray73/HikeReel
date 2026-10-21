@@ -317,6 +317,70 @@ def camera_path(scene, frames, fps, pitch=0.85, dist=1.0):
     return cam, focal, s, back
 
 
+# ── 地標 ──────────────────────────────────────────────────
+class Landmarks:
+    """地標（locationGPS.xlsx）：每幀投影到畫面上，被山擋住就淡出，走到附近時換成醒目顏色。"""
+
+    def __init__(self, scene, items, lift):
+        self.items = []
+        for name, lat, lon, _dir in items:
+            mx, my = merc(lon, lat)
+            x, y = (float(mx) - scene.cx) * scene.k, (float(my) - scene.cy) * scene.k
+            z = float(scene.terrain_at(np.array([x]), np.array([y]))[0])
+            near = int(np.argmin((scene.tx - x) ** 2 + (scene.ty - y) ** 2))   # 軌跡上最接近的點
+            self.items.append(dict(name=str(name).replace("\\n", "\n"), x=x, y=y, z=z + lift,
+                                   near=near, alpha=0.0))
+        self.scene = scene
+
+    def visible(self, cam, it):
+        ts = np.linspace(0.05, 0.95, 30)
+        lx = cam[0] * (1 - ts) + it["x"] * ts
+        ly = cam[1] * (1 - ts) + it["y"] * ts
+        lz = cam[2] * (1 - ts) + it["z"] * ts
+        return bool(np.all(self.scene.terrain_at(lx, ly) < lz))
+
+    def draw(self, img, ren, cam, idx, W, H, scale):
+        im = Image.fromarray(img)
+        dr = ImageDraw.Draw(im, "RGBA")
+        placed = []
+        order = sorted(self.items, key=lambda it: -((it["x"] - cam[0]) ** 2 + (it["y"] - cam[1]) ** 2))
+        for it in order:                                         # 遠的先畫，近的蓋在上面
+            ren.SetWorldPoint(it["x"], it["y"], it["z"], 1.0)
+            ren.WorldToDisplay()
+            dx, dy, dz = ren.GetDisplayPoint()
+            sx, sy = dx, H - dy
+            on = 0 < dz < 1 and -50 < sx < W + 50 and 0 < sy < H * 0.78 and self.visible(cam, it)
+            it["alpha"] += ((1.0 if on else 0.0) - it["alpha"]) * 0.25    # 淡入淡出
+            a = it["alpha"]
+            if a < 0.03:
+                continue
+            here = abs(idx - it["near"]) <= max(3, len(self.scene.tx) // 60)
+            passed = idx > it["near"]
+            fnt = g.PIL_FONT if here else g.PIL_FONT_SM
+            lines = it["name"].split("\n")
+            tw = max(dr.textlength(t, font=fnt) for t in lines)
+            lh = fnt.size * 1.2
+            bw, bh = tw + 16 * scale, lh * len(lines) + 10 * scale
+            stem = 38 * scale
+            bx0, by1 = sx - bw / 2, sy - stem
+            box = [bx0, by1 - bh, bx0 + bw, by1]
+            if any(not (box[2] < p[0] or box[0] > p[2] or box[3] < p[1] or box[1] > p[3]) for p in placed):
+                continue                                         # 跟已畫的標籤重疊就略過
+            placed.append(box)
+            fill = (233, 69, 96, int(235 * a)) if here else ((40, 45, 70, int(200 * a)) if passed
+                                                              else (15, 20, 40, int(200 * a)))
+            dr.line([(sx, sy), (sx, by1)], fill=(255, 255, 255, int(220 * a)), width=max(2, int(2 * scale)))
+            r = 5 * scale
+            dr.ellipse([sx - r, sy - r, sx + r, sy + r], fill=(255, 224, 102, int(255 * a)),
+                       outline=(30, 30, 30, int(200 * a)))
+            dr.rounded_rectangle(box, radius=8 * scale, fill=fill,
+                                 outline=(255, 224, 102, int(230 * a)) if here else None, width=2)
+            for k, t in enumerate(lines):
+                col = (255, 255, 255, int(255 * a)) if k == 0 else (200, 205, 225, int(255 * a))
+                dr.text((sx, by1 - bh + 5 * scale + lh * k), t, font=fnt, fill=col, anchor="ma")
+        return np.asarray(im)
+
+
 # ── HUD ───────────────────────────────────────────────────
 def draw_hud(frame, data, idx, width, height, title, credit, prof):
     im = Image.fromarray(frame)
@@ -399,6 +463,17 @@ def render(args):
     cam, focal, s, back = camera_path(scene, frames, args.fps, pitch, dist)
     idx_f = np.interp(s, data["dists"] * 1000.0, np.arange(n))
 
+    lm = None
+    lm_path = args.landmarks
+    if lm_path is None:                                          # 預設：程式旁的 locationGPS.xlsx
+        base = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+        cand = os.path.join(base, "locationGPS.xlsx")
+        lm_path = cand if os.path.isfile(cand) else None
+    if lm_path and not args.no_landmarks:
+        items = g.load_landmarks(lm_path, args.radius, data["lats"], data["lons"])
+        if items:
+            lm = Landmarks(scene, items, lift=15 * scene.ex)
+
     print("\n🏔️  建立 3D 地形...")
     mesh, tex = scene.build_mesh(pv)
     pl = pv.Plotter(off_screen=True, window_size=(W, H))
@@ -468,6 +543,8 @@ def render(args):
         pl.camera.clipping_range = (5.0, ext * 8 + 20000)
         pl.render()
         img = pl.screenshot(return_img=True)
+        if lm:
+            img = lm.draw(img, pl.renderer, cam[f], i, W, H, min(W, H) / 720)
         img = draw_hud(img, data, i, W, H, data["track_name"], credit, prof)
         proc.stdin.write(img.tobytes())
         if f % max(1, frames // 20) == 0:
@@ -498,6 +575,9 @@ def main():
     ap.add_argument("--cam-dist", type=float, default=None, help="跟隨鏡頭距離倍率（預設 1.0，衛星 2.2）")
     ap.add_argument("--line-width", type=float, default=7)
     ap.add_argument("--no-gpu", action="store_true")
+    ap.add_argument("--landmarks", default=None, help="地標庫（.xlsx / .csv），預設使用程式旁的 locationGPS.xlsx")
+    ap.add_argument("--radius", type=float, default=0.5, help="地標篩選半徑（公里）")
+    ap.add_argument("--no-landmarks", action="store_true", help="不顯示地標")
     render(ap.parse_args())
 
 
