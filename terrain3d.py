@@ -5,7 +5,9 @@ HikeReel 3D 地形飛行模式（原型）  —  MIT License
 把 GPX 軌跡畫在 3D 地形上，相機沿路線飛行，輸出成 Shorts / Reels 用的影片。
 全部使用開放資料，執行時才從網路下載（並快取在本機）：
   * 地形高程：AWS Terrain Tiles (Terrarium)  https://registry.opendata.aws/terrain-tiles/
-  * 貼圖：OpenStreetMap 或 OpenTopoMap（需標示來源）
+  * 貼圖：OpenTopoMap / OpenStreetMap，或 Sentinel-2 cloudless 衛星影像（EOX，2016 / 2024 版）
+    - s2-2016：CC BY 4.0（可商用，需標示來源）
+    - s2-2024：CC BY-NC-SA 4.0（僅限非商業使用；以它製作的影片須以相同條款分享、標示來源）
 
 用法：
   python terrain3d.py track.gpx --title "玉山主峰" --texture topo --exaggeration 1.6
@@ -82,10 +84,10 @@ def fetch_tile(url, path):
     raise RuntimeError(f"下載失敗：{url}（{last}）")
 
 
-def fetch_dem(west, south, east, north, max_px=1500):
+def fetch_dem(west, south, east, north, max_px=2048):
     """回傳 (elev[ny,nx] 公尺, (xmin, ymin, xmax, ymax) Web Mercator)。"""
     z = 8
-    for zz in range(8, 15):
+    for zz in range(8, 16):
         x0, y0 = lonlat_to_tile(west, north, zz)
         x1, y1 = lonlat_to_tile(east, south, zz)
         if (x1 - x0 + 1) * 256 > max_px or (y1 - y0 + 1) * 256 > max_px:
@@ -109,16 +111,47 @@ def fetch_dem(west, south, east, north, max_px=1500):
 
 
 # ── 貼圖 ──────────────────────────────────────────────────
+TERRAIN_CREDIT = "Terrain: Mapzen / AWS Terrain Tiles"
+EOX_URL = "https://tiles.maps.eox.at/wmts/1.0.0/{layer}/default/g/{{z}}/{{y}}/{{x}}.jpg"
+TEXTURES = {
+    "topo": dict(label="OpenTopoMap 地形圖", max_zoom=17, license="CC BY-SA",
+                 credit=["© OpenStreetMap contributors, SRTM | Map style © OpenTopoMap (CC BY-SA)"]),
+    "osm": dict(label="OpenStreetMap", max_zoom=19, license="ODbL",
+                credit=["© OpenStreetMap contributors"]),
+    "s2-2016": dict(label="衛星影像 Sentinel-2 cloudless 2016", max_zoom=15, layer="s2cloudless_3857",
+                    license="CC BY 4.0",
+                    credit=["Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH",
+                            "(Contains modified Copernicus Sentinel data 2016 & 2017) · CC BY 4.0"]),
+    "s2-2024": dict(label="衛星影像 Sentinel-2 cloudless 2024", max_zoom=15, layer="s2cloudless-2024_3857",
+                    license="CC BY-NC-SA 4.0",
+                    notice="⚠️  Sentinel-2 cloudless 2024 為 CC BY-NC-SA 4.0：僅限非商業使用（含開啟營利的影片），"
+                           "以它製作的影片須以相同條款分享並標示來源。可商用請改用 s2-2016。",
+                    credit=["Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH",
+                            "(Contains modified Copernicus Sentinel data 2024) · CC BY-NC-SA 4.0 非商業"]),
+}
+
+
+def texture_provider(source):
+    import contextily as ctx
+    t = TEXTURES[source]
+    if source == "topo":
+        return ctx.providers.OpenTopoMap
+    if source == "osm":
+        return ctx.providers.OpenStreetMap.Mapnik
+    import xyzservices
+    return xyzservices.TileProvider(name=source, url=EOX_URL.format(layer=t["layer"]),
+                                    attribution=" ".join(t["credit"]), max_zoom=t["max_zoom"])
+
+
 def fetch_texture(xmin, ymin, xmax, ymax, source="topo", max_tiles=100):
     import contextily as ctx
-    prov = {"osm": ctx.providers.OpenStreetMap.Mapnik,
-            "topo": ctx.providers.OpenTopoMap}[source]
+    prov = texture_provider(source)
     from pyproj import Transformer
     to_ll = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
     w, s = to_ll.transform(xmin, ymin)
     e, n = to_ll.transform(xmax, ymax)
     z = 10
-    for zz in range(10, 18 if source == "osm" else 17):
+    for zz in range(10, TEXTURES[source]["max_zoom"] + 1):
         x0, y0 = lonlat_to_tile(w, n, zz)
         x1, y1 = lonlat_to_tile(e, s, zz)
         if (x1 - x0 + 1) * (y1 - y0 + 1) > max_tiles:
@@ -224,7 +257,7 @@ def camera_path(scene, frames, fps, pitch=0.85, dist=1.0):
     L = float(d[-1])
     ext = float(max(np.ptp(scene.tx), np.ptp(scene.ty), 1.0))
     back = float(np.clip(L * 0.10, 150, 1800)) * dist
-    ahead = back * 0.7
+    ahead = back * 0.3                                   # 注視點貼近目前位置，紅點固定在畫面中段
     hgt = back * pitch + 90 * scene.ex
 
     def P_at(s):
@@ -246,9 +279,23 @@ def camera_path(scene, frames, fps, pitch=0.85, dist=1.0):
     focal = P_at(s + ahead)
     cam = P_at(s - back)
     cam[:, 2] = np.maximum(cam[:, 2] + hgt, P_at(s)[:, 2] + hgt)
-    sig = fps * 0.9
-    cam, focal = gaussian(cam, sig), gaussian(focal, sig * 0.6)
+    fpm = frames / max(L, 1.0)                           # 每公尺路線對應幾幀：平滑以「距離」計算，影片長短不影響追蹤
+    sig = float(np.clip(back * 0.5 * fpm, 1, fps * 1.5))
+    cam, focal = gaussian(cam, sig), gaussian(focal, float(np.clip(back * 0.15 * fpm, 1, fps)))
     cam[:, 2] = np.maximum(cam[:, 2], scene.terrain_at(cam[:, 0], cam[:, 1]) + 60 * scene.ex)
+
+    # 視線遮擋：鏡頭 → 目前位置 之間若有山擋住，就把鏡頭拉高到看得見
+    tgt = P_at(s)
+    tgt[:, 2] += 10 * scene.ex
+    ts = np.linspace(0.04, 0.96, 40)
+    lx = cam[:, None, 0] * (1 - ts) + tgt[:, None, 0] * ts
+    ly = cam[:, None, 1] * (1 - ts) + tgt[:, None, 1] * ts
+    lz = cam[:, None, 2] * (1 - ts) + tgt[:, None, 2] * ts
+    terr = scene.terrain_at(lx.ravel(), ly.ravel()).reshape(lx.shape) + 25 * scene.ex
+    need = np.max(np.maximum(0, terr - lz) / (1 - ts), axis=1)          # 鏡頭需要抬高多少
+    win = max(1, int(sig * 1.5))
+    need = np.array([need[max(0, i - win):i + win + 1].max() for i in range(len(need))])
+    cam[:, 2] += gaussian(need[:, None], max(1.0, sig * 0.6))[:, 0]
 
     # 總覽鏡頭（從南方看向北方，高處）
     center = np.array([np.mean(scene.tx), np.mean(scene.ty), np.mean(scene.tz)])
@@ -267,7 +314,7 @@ def camera_path(scene, frames, fps, pitch=0.85, dist=1.0):
         t = smoothstep(j / max(1, n_out - 1))
         cam[i] = cam[i] * (1 - t) + ov_cam * t
         focal[i] = focal[i] * (1 - t) + ov_foc * t
-    return cam, focal, s
+    return cam, focal, s, back
 
 
 # ── HUD ───────────────────────────────────────────────────
@@ -285,7 +332,10 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     items = [("距離", f"{data['dists'][i]:.2f} km"), ("海拔", f"{data['eles'][i]:.0f} m"),
              ("累積上坡", f"{prof['gain'][i]:.0f} m"), ("累積下坡", f"{prof['loss'][i]:.0f} m")]
     bar_h = g.PIL_FONT_BIG.size * 2.6
-    y0 = height - pad * 3.2 - bar_h - height * 0.12
+    lh = g.PIL_FONT_SM.size * 1.3
+    py1 = height - pad * 0.7 - lh * len(credit)
+    py0 = py1 - height * 0.09
+    y0 = py0 - pad * 0.6 - bar_h
     dr.rounded_rectangle([pad, y0, width - pad, y0 + bar_h], radius=16, fill=(15, 20, 40, 170))
     cw = (width - 2 * pad) / len(items)
     for k, (lab, val) in enumerate(items):
@@ -293,7 +343,6 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
         dr.text((x, y0 + bar_h * 0.18), val, font=g.PIL_FONT_BIG, fill=(255, 255, 255, 255), anchor="ma")
         dr.text((x, y0 + bar_h * 0.62), lab, font=g.PIL_FONT_SM, fill=(180, 190, 215, 255), anchor="ma")
     # 高度剖面
-    py0, py1 = height - pad * 1.6 - height * 0.09, height - pad * 1.6
     dr.rounded_rectangle([pad, py0, width - pad, py1], radius=12, fill=(15, 20, 40, 150))
     xs = pad + (width - 2 * pad) * data["dists"] / max(data["dists"][-1], 1e-6)
     lo, hi = data["ele_min"], max(data["ele_max"], data["ele_min"] + 1)
@@ -304,7 +353,12 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     if len(done) > 1:
         dr.line(done, fill=(245, 166, 35, 255), width=4)
     dr.ellipse([xs[i] - 7, ys[i] - 7, xs[i] + 7, ys[i] + 7], fill=(233, 69, 96, 255), outline=(255, 255, 255, 255))
-    dr.text((width - pad, height - pad * 0.9), credit, font=g.PIL_FONT_SM, fill=(255, 255, 255, 190), anchor="rs")
+    for k, line in enumerate(credit):
+        fnt = g.PIL_FONT_SM
+        while dr.textlength(line, font=fnt) > width - 2 * pad and fnt.size > 8:
+            fnt = fnt.font_variant(size=fnt.size - 1)
+        dr.text((width - pad, py1 + pad * 0.35 + lh * (k + 1) - lh * 0.25), line, font=fnt,
+                fill=(255, 255, 255, 200), anchor="rs")
     return np.asarray(im)
 
 
@@ -330,12 +384,19 @@ def render(args):
     n = len(data["lats"])
     print(f"   軌跡：{data['track_name']}，{n} 點，{data['total_dist']:.2f} km，"
           f"{data['ele_min']:.0f}~{data['ele_max']:.0f} m")
+    tinfo = TEXTURES[args.texture]
+    print(f"   貼圖：{tinfo['label']}（{tinfo['license']}）")
+    if tinfo.get("notice"):
+        print("   " + tinfo["notice"])
     scene = Scene(data, args.texture, args.exaggeration)
 
     W, H = args.width + args.width % 2, args.height + args.height % 2
     g.scale_fonts_for(W, H, W > H)
     frames = max(120, int(args.seconds * args.fps))
-    cam, focal, s = camera_path(scene, frames, args.fps, args.pitch, args.cam_dist)
+    sat = args.texture.startswith("s2")
+    dist = args.cam_dist if args.cam_dist is not None else (2.2 if sat else 1.0)     # 衛星影像 10 m 解析度，遠一點比較清楚
+    pitch = args.pitch if args.pitch is not None else (1.0 if sat else 0.85)
+    cam, focal, s, back = camera_path(scene, frames, args.fps, pitch, dist)
     idx_f = np.interp(s, data["dists"] * 1000.0, np.arange(n))
 
     print("\n🏔️  建立 3D 地形...")
@@ -357,15 +418,17 @@ def render(args):
     route.point_data["rgb"] = rgb.copy()
     pl.add_mesh(route, scalars="rgb", rgb=True, line_width=args.line_width,
                 render_lines_as_tubes=True, lighting=False, name="route")
-    marker = pv.Sphere(radius=max(5.0, ext * 0.0025), theta_resolution=24, phi_resolution=24)
-    mact = pl.add_mesh(marker, color="#e94560", smooth_shading=True)
+    rad = max(6.0, back * 0.022)                         # 依鏡頭距離決定大小，拉遠時也看得到
+    marker = pv.Sphere(radius=rad, theta_resolution=24, phi_resolution=24)
+    mact = pl.add_mesh(marker, color="#ff3b5c", lighting=False)
+    halo = pv.Sphere(radius=rad * 1.45, theta_resolution=24, phi_resolution=24)
+    hact = pl.add_mesh(halo, color="white", opacity=0.45, lighting=False)
     pl.camera.view_angle = args.fov
     pl.camera.SetWindowCenter(0.0, args.shift)      # 負值 = 把畫面往上推，讓目前位置不被下方儀表板蓋住
 
     prof = dict(gain=np.concatenate([[0], np.cumsum(np.maximum(0, np.diff(data["eles"])))]),
                 loss=np.concatenate([[0], np.cumsum(np.maximum(0, -np.diff(data["eles"])))]))
-    credit = ("© OpenStreetMap contributors" if args.texture == "osm"
-              else "© OpenStreetMap contributors, SRTM | © OpenTopoMap (CC-BY-SA)") + " · Terrain: Mapzen/AWS"
+    credit = TEXTURES[args.texture]["credit"] + [TERRAIN_CREDIT]
 
     out = args.output or os.path.splitext(os.path.basename(args.gpx))[0] + f" 3D ({W}x{H}).mp4"
     enc, hw = g.detect_encoder()
@@ -396,7 +459,9 @@ def render(args):
         r[:i + 1, 3] = 255
         r[i + 1:] = (230, 230, 255, 110)
         route.point_data["rgb"] = r
-        mact.SetPosition(float(scene.tx[i]), float(scene.ty[i]), float(scene.tz[i] + 6 * scene.ex))
+        mp = (float(scene.tx[i]), float(scene.ty[i]), float(scene.tz[i] + rad * 0.8))
+        mact.SetPosition(*mp)
+        hact.SetPosition(*mp)
         pl.camera.position = tuple(cam[f])
         pl.camera.focal_point = tuple(focal[f])
         pl.camera.up = (0, 0, 1)
@@ -420,16 +485,17 @@ def main():
     ap.add_argument("gpx")
     ap.add_argument("--title", default=None)
     ap.add_argument("--output", default=None)
-    ap.add_argument("--texture", choices=["osm", "topo"], default="topo", help="貼圖來源")
+    ap.add_argument("--texture", choices=list(TEXTURES), default="topo",
+                    help="貼圖：topo / osm / s2-2016（衛星，CC BY 4.0）/ s2-2024（衛星，CC BY-NC-SA 4.0 僅限非商業）")
     ap.add_argument("--exaggeration", type=float, default=1.5, help="地形高度誇張倍率")
     ap.add_argument("--seconds", type=float, default=30, help="影片長度（秒）")
     ap.add_argument("--fps", type=int, default=24)
     ap.add_argument("--width", type=int, default=720)
     ap.add_argument("--height", type=int, default=1280)
     ap.add_argument("--fov", type=float, default=50)
-    ap.add_argument("--shift", type=float, default=-0.35, help="畫面垂直偏移（-1~1）")
-    ap.add_argument("--pitch", type=float, default=0.85, help="跟隨鏡頭高度比（越大越俯視）")
-    ap.add_argument("--cam-dist", type=float, default=1.0, help="跟隨鏡頭距離倍率")
+    ap.add_argument("--shift", type=float, default=-0.12, help="畫面垂直偏移（-1~1）")
+    ap.add_argument("--pitch", type=float, default=None, help="跟隨鏡頭高度比（越大越俯視；預設 0.85，衛星 1.0）")
+    ap.add_argument("--cam-dist", type=float, default=None, help="跟隨鏡頭距離倍率（預設 1.0，衛星 2.2）")
     ap.add_argument("--line-width", type=float, default=7)
     ap.add_argument("--no-gpu", action="store_true")
     render(ap.parse_args())

@@ -52,11 +52,22 @@
 ```bash
 pip install pyvista truststore imageio-ffmpeg        # 另需上方的基本套件
 python terrain3d.py examples/玉山主峰.gpx --title "玉山主峰" --texture topo --exaggeration 1.5
+python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線 Tre Cime" --texture s2-2016 --seconds 40 --width 1080 --height 1920
 ```
 
 - **全部使用開放資料，執行時才上網下載**（並快取在 `~/.hikereel_tile_cache`，同區域重跑不會再下載）：
   - 地形高程：[AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)（Mapzen Terrarium）
-  - 貼圖：OpenTopoMap（`--texture topo`，等高線版）或 OpenStreetMap（`--texture osm`），影片內自動標示來源
+  - 貼圖（`--texture`），影片內自動標示來源：
+
+    | 選項 | 內容 | 授權 / 限制 |
+    |---|---|---|
+    | `topo`（預設） | OpenTopoMap 等高線地形圖 | © OpenStreetMap contributors, SRTM, OpenTopoMap（CC BY-SA） |
+    | `osm` | OpenStreetMap | © OpenStreetMap contributors（ODbL） |
+    | `s2-2016` | 衛星影像 Sentinel-2 cloudless **2016** 版（EOX） | **CC BY 4.0**：可商用，須標示來源 |
+    | `s2-2024` | 衛星影像 Sentinel-2 cloudless **2024** 版（EOX） | **CC BY-NC-SA 4.0：僅限非商業使用**（開啟營利的影片可能算商業使用），以它製作的影片須以相同條款分享並標示來源；可商用請改用 `s2-2016` |
+
+    衛星影像解析度約 10 m，近看會偏糊，所以選衛星貼圖時鏡頭預設拉得比較遠、比較高。
+    EOX 圖磚服務本身也只免費開放給非商業用途，詳見 [s2maps.eu](https://s2maps.eu)。
 - 參數：`--seconds` 影片長度、`--exaggeration` 地形高度倍率、`--cam-dist` / `--pitch` 鏡頭距離與俯角、`--shift` 畫面垂直偏移、`--width` / `--height` 解析度。
 - 需要 OpenGL（一般顯示卡 / 內顯即可），用 PyVista / VTK 離線渲染，輸出經 ffmpeg 編碼。
 - 公司或學校網路若有 SSL 檢查，安裝 `truststore` 後會自動改用 Windows 系統憑證。
