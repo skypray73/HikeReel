@@ -504,6 +504,8 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     im = Image.fromarray(frame)
     dr = ImageDraw.Draw(im, "RGBA")
     pad = int(min(width, height) * 0.035)
+    # 橫式：資訊列縮窄並靠左（不要拉滿全寬擋住畫面）；直式維持滿版
+    right = width - pad if width <= height else pad + min(width - 2 * pad, int(height * 1.05))
     # 標題
     tw = dr.textlength(title, font=g.PIL_FONT_BIG)
     dr.rounded_rectangle([pad, pad, pad + tw + pad, pad + g.PIL_FONT_BIG.size * 1.9],
@@ -518,15 +520,15 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     py1 = height - pad * 0.7 - lh * len(credit)
     py0 = py1 - height * 0.09
     y0 = py0 - pad * 0.6 - bar_h
-    dr.rounded_rectangle([pad, y0, width - pad, y0 + bar_h], radius=16, fill=(15, 20, 40, 170))
-    cw = (width - 2 * pad) / len(items)
+    dr.rounded_rectangle([pad, y0, right, y0 + bar_h], radius=16, fill=(15, 20, 40, 170))
+    cw = (right - pad) / len(items)
     for k, (lab, val) in enumerate(items):
         x = pad + cw * k + cw / 2
         dr.text((x, y0 + bar_h * 0.18), val, font=g.PIL_FONT_BIG, fill=(255, 255, 255, 255), anchor="ma")
         dr.text((x, y0 + bar_h * 0.62), lab, font=g.PIL_FONT_SM, fill=(180, 190, 215, 255), anchor="ma")
     # 高度剖面
-    dr.rounded_rectangle([pad, py0, width - pad, py1], radius=12, fill=(15, 20, 40, 150))
-    xs = pad + (width - 2 * pad) * data["dists"] / max(data["dists"][-1], 1e-6)
+    dr.rounded_rectangle([pad, py0, right, py1], radius=12, fill=(15, 20, 40, 150))
+    xs = pad + (right - pad) * data["dists"] / max(data["dists"][-1], 1e-6)
     lo, hi = data["ele_min"], max(data["ele_max"], data["ele_min"] + 1)
     ys = py1 - 8 - (py1 - py0 - 16) * (data["eles"] - lo) / (hi - lo)
     pts = list(zip(xs[::max(1, len(xs) // 400)], ys[::max(1, len(xs) // 400)]))
