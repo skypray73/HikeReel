@@ -69,7 +69,7 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線 T
     | `esri` | 高解析衛星影像 Esri World Imagery（約 1–2 m） | **需自備 ArcGIS 金鑰**；依 Esri 使用條款，影片須保留畫面上的來源標示，營利或商業用途請先確認 Esri 條款 |
 
     **使用 Esri（選用）**：到 [ArcGIS Location Platform](https://location.arcgis.com/) 免費註冊，建立 API 金鑰（選「公開應用程式」、只開「底圖」權限），然後在 PowerShell 執行
-    `setx ARCGIS_API_KEY "你的金鑰"`。免費額度每月 200 萬張圖磚，一支影片約用 900 張。金鑰請勿上傳到 GitHub；Esri 圖磚不會快取在硬碟。
+    `setx ARCGIS_API_KEY "你的金鑰"`。免費額度每月 200 萬張圖磚，一支影片約用 900 張。金鑰請勿上傳到 GitHub。Esri 圖磚依伺服器標頭最多暫存 24 小時（同一天重做同一路線不必重新下載），過期自動刪除，不做永久離線保存。
 
     Sentinel-2 衛星影像解析度約 10 m，近看會偏糊，所以選衛星貼圖時鏡頭預設拉得比較遠、比較高。
     EOX 圖磚服務本身也只免費開放給非商業用途，詳見 [s2maps.eu](https://s2maps.eu)。

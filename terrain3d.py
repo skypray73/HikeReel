@@ -157,8 +157,24 @@ def arcgis_key():
     return None
 
 
+ESRI_CACHE_SECONDS = 86400       # 依伺服器回傳的 Cache-Control: max-age=86400，最多暫存 24 小時
+
+
+def purge_esri_cache(root):
+    """刪除超過 24 小時的 Esri 暫存圖磚（Esri 不允許把圖磚當成離線資料長期保存）。"""
+    now = time.time()
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            fp = os.path.join(dirpath, f)
+            try:
+                if now - os.path.getmtime(fp) > ESRI_CACHE_SECONDS:
+                    os.remove(fp)
+            except OSError:
+                pass
+
+
 def fetch_esri(xmin, ymin, xmax, ymax, max_tiles):
-    """Esri World Imagery：只在記憶體下載拼接，不寫入磁碟快取（Esri 不允許匯出圖磚離線使用）。"""
+    """Esri World Imagery：圖磚依 HTTP 標頭最多暫存 24 小時，同一天重做不必重新下載，過期自動刪除。"""
     from concurrent.futures import ThreadPoolExecutor
     import io
     key = arcgis_key()
@@ -178,16 +194,34 @@ def fetch_esri(xmin, ymin, xmax, ymax, max_tiles):
     x0, y0 = lonlat_to_tile(w, n, z)
     x1, y1 = lonlat_to_tile(e, s_, z)
     nx, ny = x1 - x0 + 1, y1 - y0 + 1
-    print(f"   貼圖：esri，zoom {z}，{nx}×{ny} = {nx * ny} 張圖磚（不快取）")
+    cache_root = os.path.join(CACHE, "esri_24h")
+    purge_esri_cache(cache_root)
+    stats = {"hit": 0, "dl": 0}
 
     def get(xy):
         tx, ty = xy
+        cp = os.path.join(cache_root, str(z), str(tx), f"{ty}.jpg")       # 檔名不含金鑰
+        try:
+            if time.time() - os.path.getmtime(cp) < ESRI_CACHE_SECONDS:
+                stats["hit"] += 1
+                return xy, np.asarray(Image.open(cp).convert("RGB"))
+        except (OSError, ValueError):
+            pass
         url = ESRI_URL.format(z=z, x=tx, y=ty) + "?token=" + key
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:
-                    return xy, np.asarray(Image.open(io.BytesIO(r.read())).convert("RGB"))
+                    raw = r.read()
+                a = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB"))
+                try:
+                    os.makedirs(os.path.dirname(cp), exist_ok=True)
+                    with open(cp, "wb") as f:
+                        f.write(raw)
+                except OSError:
+                    pass
+                stats["dl"] += 1
+                return xy, a
             except urllib.error.HTTPError as ex:
                 if ex.code in (401, 403):
                     raise RuntimeError(f"ArcGIS 金鑰無效或權限不足（HTTP {ex.code}）") from None
@@ -204,6 +238,7 @@ def fetch_esri(xmin, ymin, xmax, ymax, max_tiles):
     for (tx, ty), a in got.items():
         if a is not None:
             img[(ty - y0) * ts:(ty - y0 + 1) * ts, (tx - x0) * ts:(tx - x0 + 1) * ts] = a[:ts, :ts]
+    print(f"   Esri 圖磚：下載 {stats['dl']} 張，使用 24 小時內暫存 {stats['hit']} 張")
     missing = sum(a is None for a in got.values())
     if missing:
         print(f"   ⚠️  {missing} 張圖磚下載失敗")
