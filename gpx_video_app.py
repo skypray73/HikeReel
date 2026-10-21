@@ -25,7 +25,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.0.2"
 RELEASE_DATE = "2026/10/21"
 
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"

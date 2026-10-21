@@ -690,20 +690,36 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     sc = min(width, height) / 720
     pad = int(min(width, height) * 0.035)
     land = width > height
-    right = width - pad if not land else pad + min(width - 2 * pad, int(height * 1.1))
     big, mid, sm = g.PIL_FONT_BIG, g.PIL_FONT, g.PIL_FONT_SM
 
     # 標題
     tw = dr.textlength(title, font=big)
-    dr.rounded_rectangle([pad, pad, pad + tw + pad, pad + big.size * 1.9], radius=int(12 * sc), fill=PANEL_RGBA)
+    t_bottom = pad + big.size * 1.9
+    dr.rounded_rectangle([pad, pad, pad + tw + pad, t_bottom], radius=int(12 * sc), fill=PANEL_RGBA)
     dr.text((pad * 1.5, pad + big.size * 0.35), title, font=big, fill=(255, 255, 255, 255))
 
-    # 版面：最下方來源標示 → 高度剖面 → 儀表板
     lh = sm.size * 1.3
-    py1 = height - pad * 0.7 - lh * len(credit)
-    py0 = py1 - (height * (0.24 if land else 0.17))
-    cell_h = big.size + sm.size * 2.9
-    y0 = py0 - pad * 0.5 - cell_h
+    gap = int(8 * sc)
+    cell_h = big.size + sm.size * 3.4
+    cells = []                                             # 4 格儀表板的位置 (x0, y0, 寬)
+    if land:
+        # 橫式：儀表板（2×2）＋高度剖面縮成左下角一塊（寬約 1/3，與 2D 橫式的左欄相近），畫面其餘留給 3D
+        bw = int(width * 0.34)
+        left, right = pad, pad + bw
+        py1 = height - pad
+        py0 = py1 - int(height * 0.21)
+        r2 = py0 - gap - cell_h
+        r1 = r2 - gap - cell_h
+        cw = (bw - gap) / 2
+        cells = [(left, r1, cw), (left + cw + gap, r1, cw), (left, r2, cw), (left + cw + gap, r2, cw)]
+    else:
+        # 直式（與 2D 直式相同的分配）：數字列在最上方（標題下），高度剖面在最下方，合計約 28% 高度，中間留給 3D
+        left, right = pad, width - pad
+        cw = ((right - left) - gap * 3) / 4
+        r1 = t_bottom + gap
+        cells = [(left + k * (cw + gap), r1, cw) for k in range(4)]
+        py1 = height - pad * 0.7 - lh * len(credit)
+        py0 = py1 - int(height * 0.20)
 
     # ── 儀表板：4 格，左側色條＋標籤＋彩色數字（2D 模板） ──
     i = int(idx)
@@ -712,17 +728,14 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
              (f"{e[i]:.0f}", "m", f"▲{data['ele_max']:.0f}  ▼{data['ele_min']:.0f} m"),
              (f"{prof['gain'][i]:.0f}", f"/ {prof['gain'][-1]:.0f} m", None),
              (f"{prof['loss'][i]:.0f}", f"/ {prof['loss'][-1]:.0f} m", None)]
-    gap = int(8 * sc)
-    cw = ((right - pad) - gap * 3) / 4
-    for k, ((val, unit, sub), lab, col) in enumerate(zip(items, DASH_LABELS, DASH_COLORS)):
-        x0 = pad + k * (cw + gap)
-        dr.rounded_rectangle([x0, y0, x0 + cw, y0 + cell_h], radius=int(8 * sc), fill=PANEL_RGBA)
+    for ((val, unit, sub), lab, col, (x0, y0, cw_)) in zip(items, DASH_LABELS, DASH_COLORS, cells):
+        dr.rounded_rectangle([x0, y0, x0 + cw_, y0 + cell_h], radius=int(8 * sc), fill=PANEL_RGBA)
         dr.rectangle([x0, y0 + 4 * sc, x0 + max(3, 5 * sc), y0 + cell_h - 4 * sc], fill=col + (255,))
         tx = x0 + 12 * sc
         dr.text((tx, y0 + 6 * sc), lab, font=sm, fill=LABEL_COL + (255,))
         vy = y0 + 6 * sc + sm.size * 1.25
         fb = big
-        while dr.textlength(val, font=fb) + dr.textlength(unit, font=sm) + 18 * sc > cw and fb.size > 10:
+        while dr.textlength(val, font=fb) + dr.textlength(unit, font=sm) + 18 * sc > cw_ and fb.size > 10:
             fb = fb.font_variant(size=fb.size - 1)
         dr.text((tx, vy), val, font=fb, fill=col + (255,))
         vw = dr.textlength(val, font=fb)
@@ -777,12 +790,22 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     dr.text((lx, cy - sm.size * 1.1), lab, font=sm, fill=TEXT_COL + (255,))
 
     # 來源標示
-    for k, line in enumerate(credit):
+    cmax = (width - 2 * pad) if not land else (width - right - 2 * pad)      # 橫式：放在右下角，不壓到左下的儀表板
+    cx1 = width - pad
+    cy_base = (py1 + pad * 0.35 + lh * len(credit)) if not land else (height - pad * 0.5)
+    lines = []
+    for line in credit:
         fnt = sm
-        while dr.textlength(line, font=fnt) > width - 2 * pad and fnt.size > 8:
+        while dr.textlength(line, font=fnt) > cmax and fnt.size > 8:
             fnt = fnt.font_variant(size=fnt.size - 1)
-        dr.text((width - pad, py1 + pad * 0.35 + lh * (k + 1) - lh * 0.25), line, font=fnt,
-                fill=(255, 255, 255, 200), anchor="rs")
+        lines.append((line, fnt, dr.textlength(line, font=fnt)))
+    bx0 = cx1 - max(w for _, _, w in lines) - 8 * sc
+    by1 = cy_base + 3 * sc
+    by0 = cy_base - lh * (len(credit) - 1) - lh * 0.95
+    dr.rounded_rectangle([bx0, by0, cx1 + 6 * sc, by1], radius=int(6 * sc), fill=(10, 15, 30, 150))   # 底色：亮色地形上也看得清楚
+    for k, (line, fnt, _) in enumerate(lines):
+        dr.text((cx1, cy_base - lh * (len(credit) - 1 - k) - lh * 0.25), line, font=fnt,
+                fill=(255, 255, 255, 235), anchor="rs")
     return np.asarray(Image.alpha_composite(im, ov).convert("RGB"))
 
 
