@@ -32,7 +32,6 @@ if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     # contextily 的 tile 快取目錄（實際生效是在下方 import contextily 後
     # 呼叫 ctx.set_cache_dir，這裡先算好路徑存起來）
     _HIKEREEL_TILE_CACHE = _os.path.join(_os.path.dirname(sys.executable), '.contextily_cache')
-    _os.makedirs(_HIKEREEL_TILE_CACHE, exist_ok=True)
 else:
     _HIKEREEL_TILE_CACHE = None
 
@@ -156,9 +155,28 @@ try:
     # 2) 持久化磁碟快取：同一路線／區域重跑時直接讀快取，不重複跟
     #    OSM 伺服器要圖磚。打包成 exe 時放在 exe 旁（見上方 _HIKEREEL_TILE_CACHE），
     #    一般以腳本執行時放在使用者家目錄下。
-    _tile_cache_dir = _HIKEREEL_TILE_CACHE or os.path.join(
-        os.path.expanduser("~"), ".hikereel_tile_cache")
-    os.makedirs(_tile_cache_dir, exist_ok=True)
+    #    程式資料夾若不能寫入（例如放在 Program Files、或被公司政策限制），
+    #    改用使用者自己的 %LOCALAPPDATA%\HikeReel\tile_cache，不會讓程式當掉。
+    def _writable_dir(*cands):
+        import tempfile
+        for d in cands:
+            if not d:
+                continue
+            try:
+                os.makedirs(d, exist_ok=True)
+                t = os.path.join(d, ".write_test")
+                with open(t, "w"):
+                    pass
+                os.remove(t)
+                return d
+            except OSError:
+                continue
+        return tempfile.gettempdir()
+
+    _tile_cache_dir = _writable_dir(
+        _HIKEREEL_TILE_CACHE,
+        os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "HikeReel", "tile_cache"),
+        os.path.join(os.path.expanduser("~"), ".hikereel_tile_cache"))
     ctx.set_cache_dir(_tile_cache_dir)
 except ImportError:
     pass
