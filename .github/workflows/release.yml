@@ -1,0 +1,55 @@
+# 推送 v* 標籤時：在 Windows 上打包 HikeReel（主程式 + _internal 套件資料夾），
+# 和 locationGPS.xlsx、LICENSE、README.txt 一起壓成 zip，發佈成 GitHub Release。
+name: Build and release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build (onedir)
+        run: pyinstaller --noconfirm HikeReel.spec
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}"
+          if (-not $ver.StartsWith("v")) { $ver = "dev" }
+          $name = "HikeReel_$ver"
+          New-Item -ItemType Directory -Force $name | Out-Null
+          Copy-Item -Recurse dist/HikeReel/* $name
+          Copy-Item locationGPS.xlsx, LICENSE, packaging/README.txt $name
+          Compress-Archive -Path $name -DestinationPath "${name}_Windows.zip"
+          Get-Item "${name}_Windows.zip" | Format-List Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HikeReel-windows
+          path: HikeReel_*_Windows.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: HikeReel ${{ github.ref_name }}
+          body_path: packaging/RELEASE_NOTES.md
+          files: HikeReel_*_Windows.zip

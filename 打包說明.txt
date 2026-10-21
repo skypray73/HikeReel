@@ -1,34 +1,33 @@
-# HikeReel — 打包成 .exe 說明
+# HikeReel v2.0 — 打包成 .exe 說明
 # =======================================
+# v2.0 起改為「onedir」：HikeReel.exe（主程式，幾 MB）+ _internal\（套件），
+# 不再把所有套件硬塞進單一 exe，啟動更快、防毒誤判較少。
 
-# ── 步驟 1：確認套件都有裝 ────────────────
-pip install pyinstaller contextily pyproj rasterio mercantile xyzservices certifi opencv-python gpxpy openpyxl pillow matplotlib numpy
+# ── 步驟 1：安裝套件 ──────────────────────
+pip install -r requirements.txt pyinstaller
 
-# ── 步驟 2：把以下檔案放在同一資料夾 ──────
-#   gpx_to_video.py
-#   gpx_video_app.py
-#   ffmpeg.exe（選用，放同資料夾即可）
+# ── 步驟 2：打包（在專案資料夾執行）─────────
+pyinstaller --noconfirm HikeReel.spec
 
-# ── 步驟 3：打包指令（一行，直接貼上執行）──
-# ★ 重點：OpenCV 要用 --collect-all opencv-python（否則 exe 找不到 cv2）
+# ── 步驟 3：完成後 ──────────────────────────
+# 輸出：dist\HikeReel\HikeReel.exe 與 dist\HikeReel\_internal\
+# 發佈時把整個 dist\HikeReel 資料夾，加上 locationGPS.xlsx、LICENSE、README.txt 一起壓成 zip
+# ★ 執行路徑請用純英文（不要有中文資料夾名）
 
-pyinstaller --onefile --windowed --name "HikeReel" --add-data "gpx_to_video.py;." --collect-all cv2 --collect-all contextily --collect-all pyproj --collect-all rasterio --collect-all mercantile --collect-all xyzservices --collect-all certifi --copy-metadata contextily --copy-metadata pyproj --copy-metadata rasterio --hidden-import pyproj.datadir --hidden-import certifi --hidden-import gpxpy --hidden-import gpxpy.gpx --hidden-import openpyxl --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageDraw --hidden-import PIL.ImageFont --hidden-import matplotlib --hidden-import matplotlib.pyplot --hidden-import matplotlib.font_manager --hidden-import matplotlib.collections --hidden-import numpy gpx_video_app.py
+# ── HikeReel.spec 收進的套件 ─────────────────
+# cv2                    → OpenCV（影片編碼、影像處理）
+# contextily / mercantile / xyzservices / rasterio / pyproj → 2D 底圖下載與座標轉換
+# certifi / truststore   → SSL 憑證（下載圖磚用）
+# pyvista + vtkmodules   → 3D 地形渲染
+# gpx_to_video / terrain3d / landmark_photos → HikeReel 的 2D / 3D / 地標照片模組
 
-# ── 步驟 4：完成後 ──────────────────────────
-# dist\HikeReel.exe
-# 把 exe + locationGPS.xlsx + ffmpeg.exe 放同一資料夾
-# ★ exe 執行路徑不要有中文，否則會報「Could not load PKG archive」
-
-# ── 各 --collect-all 的用途 ────────────────
-# cv2          → OpenCV，缺了會報 No module named 'cv2'
-# contextily   → 下載 OpenStreetMap 底圖
-# pyproj       → 座標轉換
-# rasterio     → 地圖圖磚處理
-# mercantile / xyzservices → 圖磚座標與圖源
-# certifi      → SSL 憑證（下載底圖要用）
+# ── 命令列測試打包結果 ───────────────────────
+# HikeReel.exe --cli2d 路線.gpx --speed 15
+# HikeReel.exe --cli3d 路線.gpx --texture esri --seconds 20
+# （exe 是視窗程式，不會顯示文字；看輸出的 mp4 是否產生即可）
 
 # ── 注意事項 ────────────────────────────────
-# 1. exe 只能在 Windows 跑
-# 2. exe 約 300~500MB（含這些套件較大）
-# 3. 首次開啟可能被防毒警告，選「仍要執行」
-# 4. exe 執行路徑必須是純英文（不能有中文資料夾名）
+# 1. 只能在 Windows 執行
+# 2. 3D 模式需要支援 OpenGL 的顯示卡（內顯即可）與使用者自己的 ArcGIS 金鑰
+# 3. ffmpeg 不隨附（授權與體積考量），請使用者自行安裝：winget install Gyan.FFmpeg
+# 4. 首次開啟可能被防毒或 SmartScreen 警告，選「仍要執行」

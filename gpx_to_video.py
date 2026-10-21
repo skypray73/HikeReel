@@ -36,6 +36,18 @@ if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
 else:
     _HIKEREEL_TILE_CACHE = None
 
+for _s in (sys.stdout, sys.stderr):          # Windows 主控台（cp950）印不出 emoji 時不要當掉
+    try:
+        _s.reconfigure(errors="replace")
+    except Exception:
+        pass
+
+try:                                        # 使用 Windows 系統憑證庫（公司/學校網路常有 SSL 檢查，certifi 驗證會失敗）
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -138,7 +150,7 @@ try:
     # 1) 識別用 User-Agent：OSM 政策要求請求需附上可識別應用程式的
     #    User-Agent（含聯絡方式/專案連結），不可用預設的匿名字串，
     #    否則容易被誤判為未識別的自動化流量而遭封鎖。
-    HIKEREEL_UA = "HikeReel/1.0 (+https://github.com/skypray73/HikeReel)"
+    HIKEREEL_UA = "HikeReel/2.0 (+https://github.com/skypray73/HikeReel)"
     OSM_TILE_HEADERS = {"User-Agent": HIKEREEL_UA}
 
     # 2) 持久化磁碟快取：同一路線／區域重跑時直接讀快取，不重複跟
@@ -369,6 +381,25 @@ def parse_gpx(path):
         ele_max=float(eles.max()), ele_min=float(eles.min()),
         track_name=raw,
     )
+
+# ── OSM 來源標示 ──────────────────────────────────────────
+OSM_CREDIT = "© OpenStreetMap contributors"
+
+
+def add_osm_credit(bg_bgr):
+    """OpenStreetMap 授權（ODbL）要求標示來源：在靜態背景右下角加上小字（只畫一次，不影響速度）。"""
+    h, w = bg_bgr.shape[:2]
+    im = Image.fromarray(bg_bgr[..., ::-1].copy())
+    dr = ImageDraw.Draw(im, "RGBA")
+    fnt = PIL_FONT_SM or ImageFont.load_default()
+    tw = dr.textlength(OSM_CREDIT, font=fnt)
+    pad = max(4, int(min(w, h) * 0.008))
+    x1, y1 = w - pad, h - pad
+    box = [x1 - tw - 2 * pad, y1 - fnt.size - 2 * pad, x1, y1]
+    dr.rectangle(box, fill=(0, 0, 0, 110))
+    dr.text((x1 - pad, y1 - pad), OSM_CREDIT, font=fnt, fill=(255, 255, 255, 230), anchor="rd")
+    return np.asarray(im)[..., ::-1].copy()
+
 
 # ── 底圖下載 ──────────────────────────────────────────────
 def get_basemap(lats, lons, quality_boost=0):
@@ -1096,7 +1127,15 @@ def find_ffmpeg():
             return p
 
     # 3. 系統 PATH
-    return shutil.which("ffmpeg")
+    p = shutil.which("ffmpeg")
+    if p:
+        return p
+    # 4. 有安裝 imageio-ffmpeg 套件的話，用它附的 ffmpeg
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
 
 
 def detect_encoder():
@@ -1194,6 +1233,8 @@ def main():
     t0 = time.time()
     bg, map_px, ele_px, ele_base_y, ele_area, dash_cells, is_landscape, frame_w = \
         render_static(data, args.width, args.height, basemap)
+    if basemap is not None:
+        bg = add_osm_credit(bg)
     print(f"   完成（{time.time()-t0:.1f} 秒）")
 
     # 確保背景尺寸正確

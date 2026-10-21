@@ -1,0 +1,16 @@
+# HikeReel v2.0 — pip install -r requirements.txt
+gpxpy
+numpy
+matplotlib
+opencv-python
+pillow
+openpyxl
+contextily
+pyproj
+rasterio
+mercantile
+xyzservices
+certifi
+truststore      # 使用 Windows 系統憑證（公司/學校網路的 SSL 檢查）
+pyvista         # 3D 模式（含 VTK）
+# imageio-ffmpeg  # 選用：沒有安裝 ffmpeg 時，可用這個套件附的 ffmpeg

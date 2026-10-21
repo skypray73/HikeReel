@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-路線海拔變化圖產生器 — GUI 版（支援多檔批次）
+HikeReel — GPX 健行軌跡 → 動態影片（GUI，支援多檔批次）
+  2D：OpenStreetMap 平面地圖
+  3D：Esri 高解析衛星影像 + 3D 地形飛行（需自備 ArcGIS 金鑰）
+Copyright (c) 2026 Skypray Huang — MIT License
 """
 
 import tkinter as tk
@@ -22,14 +25,48 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
+APP_VERSION = "2.0"
+RELEASE_DATE = "2026/10/21"
+
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"
 TEXT, DIM, SUCCESS, GOLD, DARK2 = "#eaeaea", "#888899", "#00e676", "#ffc864", "#0f1932"
+
+
+LICENSE_TEXT = f"""HikeReel v{APP_VERSION}（{RELEASE_DATE}）
+Copyright (c) 2026 Skypray Huang
+本程式以 MIT License 釋出，完整條文見程式資料夾或 GitHub 的 LICENSE 檔。
+https://github.com/skypray73/HikeReel
+
+━━ 地圖與影像資料（影片中會自動標示來源）━━
+• 2D 底圖：OpenStreetMap
+  © OpenStreetMap contributors，資料授權 ODbL（opendatacommons.org/licenses/odbl）。
+  圖磚依 OSM 圖磚使用政策取得並快取在本機，請勿大量下載。
+• 3D 衛星影像：Esri World Imagery（需自備 ArcGIS Location Platform 金鑰）
+  Powered by Esri · Source: Esri, Vantor, GeoEye, Earthstar Geographics, CNES/Airbus DS,
+  USDA, USGS, AeroGRID, IGN, and the GIS User Community。
+  依 Esri 使用條款使用；圖磚最多暫存 24 小時。影片公開分享須保留畫面上的來源標示，
+  營利或商業用途請先確認 Esri 條款。HikeReel 不提供、也不內建任何金鑰。
+• 3D 地形高程：AWS Terrain Tiles（Mapzen Terrarium）
+  資料來源含 SRTM、GMTED、ETOPO1、EU-DEM 等，詳見
+  github.com/tilezen/joerd/blob/master/docs/attribution.md
+• 命令列版另可選：OpenTopoMap（CC BY-SA）、Sentinel-2 cloudless 2016（EOX，CC BY 4.0）、
+  Sentinel-2 cloudless 2024（EOX，CC BY-NC-SA 4.0，僅限非商業）。
+
+━━ 你提供的內容 ━━
+• GPX 軌跡、地標資料庫、地標照片的版權屬於原作者；請確認你有權使用與公開。
+
+━━ 使用的開源元件 ━━
+Python（PSF License）、NumPy（BSD）、Matplotlib（PSF-based）、OpenCV（Apache-2.0）、
+Pillow（MIT-CMU）、gpxpy（Apache-2.0）、contextily（BSD）、pyproj（MIT）、rasterio（BSD）、
+mercantile（BSD）、xyzservices（BSD）、certifi（MPL-2.0）、openpyxl（MIT）、
+PyVista（MIT）、VTK（BSD）、truststore（MIT）、FFmpeg（LGPL/GPL，另行安裝）。
+"""
 
 
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("HikeReel v1.01")
+        self.root.title(f"HikeReel v{APP_VERSION}")
         self.root.configure(bg=BG)
         self.root.resizable(True, True)
         root.update_idletasks()
@@ -45,6 +82,10 @@ class App:
         self.speed_var  = tk.StringVar(value="15")
         self.radius_var = tk.StringVar(value="0.5")
         self.bm_var     = tk.BooleanVar(value=True)
+        self.mode_var   = tk.StringVar(value="2d")          # "2d" = OpenStreetMap 平面、"3d" = Esri 3D 地形
+        self.sec3d_var  = tk.StringVar(value="40")
+        self.photo_dir_var = tk.StringVar(value=self._default_photo_dir())
+        self.photo_sec_var = tk.StringVar(value="3")
 
         # 解析度清單：(顯示名稱, 寬, 高)
         self.RES_OPTIONS = [
@@ -68,6 +109,11 @@ class App:
 
         self._ui()
         self._poll()
+
+    def _default_photo_dir(self):
+        import landmark_photos as lp
+        lm = self.lm_var.get().strip() if hasattr(self, "lm_var") else ""
+        return lp.default_folder(lm) if lm else os.path.join(BASE_DIR, lp.DEFAULT_FOLDER)
 
     def _find_lm(self):
         p = os.path.join(BASE_DIR, "locationGPS.xlsx")
@@ -102,11 +148,15 @@ class App:
         canvas.bind_all("<MouseWheel>", _on_scroll)
 
         f = self.frame
-        tk.Label(f, text="HikeReel v1.01", bg=BG, fg=GOLD,
+        tk.Label(f, text=f"HikeReel v{APP_VERSION}", bg=BG, fg=GOLD,
                  font=("Microsoft JhengHei UI", 20, "bold")).pack(pady=(20,2))
-        tk.Label(f, text="開發：Skypray Huang　　首版日期：2026/6/21　　最新日期：2026/9/6",
+        tk.Label(f, text=f"開發：Skypray Huang　　首版日期：2026/6/21　　最新日期：{RELEASE_DATE}",
                  bg=BG, fg=DIM,
-                 font=("Microsoft JhengHei UI", 10)).pack(pady=(0,16))
+                 font=("Microsoft JhengHei UI", 10)).pack(pady=(0,4))
+        about = tk.Label(f, text="版權與授權資訊", bg=BG, fg="#7fb3ff", cursor="hand2",
+                         font=("Microsoft JhengHei UI", 10, "underline"))
+        about.pack(pady=(0,14))
+        about.bind("<Button-1>", lambda e: self._about())
 
         # ① GPX（多檔，每個可自訂標題）
         self._sec(f, "① GPX 軌跡檔案（可一次選多個，標題可個別修改）")
@@ -153,8 +203,49 @@ class App:
                  ).pack(side="left", fill="x", expand=True)
         self._btn(r2, "選擇", self._pick_lm).pack(side="left", padx=(8,0))
 
-        # ③ 設定
-        self._sec(f, "③ 設定")
+        # ③ 模式
+        self._sec(f, "③ 模式")
+        mf = tk.Frame(f, bg=PANEL); mf.pack(fill="x", padx=20, pady=4)
+        for val, text, hint in (
+                ("2d", "2D　OpenStreetMap 平面地圖", "免金鑰；依「加速倍數」決定影片長度"),
+                ("3d", "3D　Esri 高解析衛星影像＋地形飛行", "需自備 ArcGIS 金鑰（免費申請）")):
+            row = tk.Frame(mf, bg=PANEL); row.pack(fill="x", padx=10, pady=3)
+            tk.Radiobutton(row, text=text, value=val, variable=self.mode_var, command=self._on_mode,
+                           bg=PANEL, fg=TEXT, selectcolor=DARK2, activebackground=PANEL,
+                           activeforeground=GOLD, font=("Microsoft JhengHei UI", 11)).pack(side="left")
+            tk.Label(row, text=hint, bg=PANEL, fg=DIM,
+                     font=("Microsoft JhengHei UI", 9)).pack(side="left", padx=8)
+        self.f3d = tk.Frame(mf, bg=PANEL)
+        r3 = tk.Frame(self.f3d, bg=PANEL); r3.pack(fill="x", padx=14, pady=(2, 6))
+        tk.Label(r3, text="3D 影片長度（秒）", bg=PANEL, fg=TEXT,
+                 font=("Microsoft JhengHei UI", 11)).pack(side="left")
+        tk.Entry(r3, textvariable=self.sec3d_var, bg=DARK2, fg=GOLD, insertbackground=GOLD,
+                 relief="flat", font=("Consolas", 12), width=6).pack(side="left", padx=8)
+        tk.Label(r3, text="不含地標照片停留時間", bg=PANEL, fg=DIM,
+                 font=("Microsoft JhengHei UI", 9)).pack(side="left")
+        r4 = tk.Frame(self.f3d, bg=PANEL); r4.pack(fill="x", padx=14, pady=(0, 8))
+        self.key_lbl = tk.Label(r4, text="", bg=PANEL, fg=DIM, font=("Microsoft JhengHei UI", 10))
+        self.key_lbl.pack(side="left")
+        self._btn(r4, "設定 ArcGIS 金鑰", self._key_dialog).pack(side="left", padx=8)
+
+        # ④ 地標照片
+        self._sec(f, "④ 地標照片（2D、3D 都適用；沒有照片的地標不顯示、不停留）")
+        r5 = tk.Frame(f, bg=BG); r5.pack(fill="x", padx=20, pady=5)
+        tk.Entry(r5, textvariable=self.photo_dir_var, bg=PANEL, fg=TEXT,
+                 insertbackground=TEXT, relief="flat",
+                 font=("Microsoft JhengHei UI", 10), bd=6).pack(side="left", fill="x", expand=True)
+        self._btn(r5, "資料夾", self._pick_photo_dir).pack(side="left", padx=(8,0))
+        r6 = tk.Frame(f, bg=BG); r6.pack(fill="x", padx=20, pady=(2,4))
+        self._btn(r6, "🖼  管理地標照片…", self._photo_dialog).pack(side="left")
+        tk.Label(r6, text="　每張停留（秒）", bg=BG, fg=TEXT,
+                 font=("Microsoft JhengHei UI", 11)).pack(side="left")
+        tk.Entry(r6, textvariable=self.photo_sec_var, bg=DARK2, fg=GOLD, insertbackground=GOLD,
+                 relief="flat", font=("Consolas", 12), width=5).pack(side="left", padx=6)
+        tk.Label(r6, text="建議 2.5～3.5", bg=BG, fg=DIM,
+                 font=("Microsoft JhengHei UI", 9)).pack(side="left")
+
+        # ⑤ 設定
+        self._sec(f, "⑤ 設定")
         pf = tk.Frame(f, bg=PANEL); pf.pack(fill="x", padx=20, pady=4)
         # 解析度選單
         tk.Label(pf, text="輸出解析度", bg=PANEL, fg=TEXT,
@@ -166,7 +257,7 @@ class App:
                                 font=("Microsoft JhengHei UI", 10), width=32)
         res_menu.grid(row=0, column=1, columnspan=2, sticky="w", padx=8, pady=6)
 
-        self._prow(pf, "加速倍數",        self.speed_var,  "推薦 10~20", 1)
+        self._prow(pf, "加速倍數（2D）",  self.speed_var,  "推薦 10~20", 1)
         self._prow(pf, "地標篩選半徑(km)", self.radius_var, "預設 0.5", 2)
 
         # 大顆勾選框（自繪，明顯）
@@ -176,7 +267,7 @@ class App:
                                font=("Segoe UI Symbol", 18), cursor="hand2")
         self.bm_btn.pack(side="left")
         self.bm_btn.bind("<Button-1>", self._toggle_bm)
-        lbl = tk.Label(cb, text=" 下載 OpenStreetMap 底圖（需要網路，首次較慢）",
+        lbl = tk.Label(cb, text=" 下載 OpenStreetMap 底圖（2D；需要網路，首次較慢）",
                        bg=PANEL, fg=TEXT, cursor="hand2",
                        font=("Microsoft JhengHei UI", 11))
         lbl.pack(side="left")
@@ -210,10 +301,162 @@ class App:
             padx=10, pady=8)
         self.log.pack(fill="both", expand=True, padx=20, pady=(4,20))
 
+    # ── 模式 / 金鑰 ───────────────────────────────────────────
+    def _on_mode(self):
+        if self.mode_var.get() == "3d":
+            self.f3d.pack(fill="x")
+            self._refresh_key_label()
+            import terrain3d as t3
+            if not t3.arcgis_key():
+                if not self._key_dialog():
+                    self.mode_var.set("2d")
+                    self.f3d.pack_forget()
+        else:
+            self.f3d.pack_forget()
+
+    def _refresh_key_label(self):
+        import terrain3d as t3
+        ok = bool(t3.arcgis_key())
+        self.key_lbl.config(text="✓ 已設定 ArcGIS 金鑰" if ok else "尚未設定 ArcGIS 金鑰",
+                            fg=SUCCESS if ok else "#ffaa44")
+
+    def _key_dialog(self):
+        """輸入 ArcGIS 金鑰。回傳是否已設定成功。"""
+        import terrain3d as t3, webbrowser
+        win = tk.Toplevel(self.root); win.title("設定 ArcGIS 金鑰（3D 模式）")
+        win.configure(bg=BG); win.transient(self.root); win.grab_set()
+        win.geometry("640x470")
+        tk.Label(win, text="3D 模式使用 Esri World Imagery 高解析衛星影像", bg=BG, fg=GOLD,
+                 font=("Microsoft JhengHei UI", 13, "bold")).pack(pady=(18, 6))
+        msg = ("需要你自己的 ArcGIS Location Platform 金鑰（免費申請，免費額度每月 200 萬張圖磚，"
+               "一支影片約 900 張）。\n\n"
+               "申請步驟：登入下方網址 →「開發人員認證」→ 建立 API 金鑰 → 選「公開應用程式」→"
+               "「無項目存取權」→ 權限只開「底圖 → 靜態底圖圖磚」。\n\n"
+               "金鑰只會存在這台電腦的 Windows 使用者環境變數 ARCGIS_API_KEY，不會上傳。\n"
+               "使用 Esri 影像製作的影片須保留畫面上的來源標示；營利或商業用途請先確認 Esri 使用條款。")
+        tk.Label(win, text=msg, bg=BG, fg=TEXT, justify="left", wraplength=590,
+                 font=("Microsoft JhengHei UI", 10)).pack(padx=24, anchor="w")
+        link = tk.Label(win, text="https://location.arcgis.com/", bg=BG, fg="#7fb3ff", cursor="hand2",
+                        font=("Microsoft JhengHei UI", 10, "underline"))
+        link.pack(pady=6)
+        link.bind("<Button-1>", lambda e: webbrowser.open("https://location.arcgis.com/"))
+        kv = tk.StringVar()
+        ent = tk.Entry(win, textvariable=kv, show="•", bg=PANEL, fg=TEXT, insertbackground=TEXT,
+                       relief="flat", font=("Consolas", 11), bd=6)
+        ent.pack(fill="x", padx=24, pady=6); ent.focus_set()
+        st = tk.Label(win, text="", bg=BG, fg=DIM, font=("Microsoft JhengHei UI", 10))
+        st.pack()
+        result = {"ok": False}
+
+        def save():
+            k = kv.get().strip()
+            if len(k) < 20 or not k.isascii():
+                st.config(text="金鑰格式不對：應為一長串英數字（通常以 AAPT 或 AAPK 開頭）", fg="#ff6666"); return
+            st.config(text="測試金鑰中…", fg=DIM); win.update()
+            ok, why = t3.check_arcgis_key(k)
+            if not ok:
+                st.config(text=why, fg="#ff6666"); return
+            t3.save_arcgis_key(k)
+            result["ok"] = True
+            win.destroy()
+
+        bf = tk.Frame(win, bg=BG); bf.pack(pady=12)
+        self._btn(bf, "測試並儲存", save).pack(side="left", padx=6)
+        self._btn(bf, "取消", win.destroy).pack(side="left", padx=6)
+        win.bind("<Return>", lambda e: save())
+        self.root.wait_window(win)
+        if hasattr(self, "key_lbl"):
+            self._refresh_key_label()
+        return result["ok"] or bool(t3.arcgis_key())
+
+    # ── 地標照片 ──────────────────────────────────────────────
+    def _pick_photo_dir(self):
+        d = filedialog.askdirectory(title="選擇地標照片資料夾")
+        if d:
+            self.photo_dir_var.set(d)
+
+    def _photo_dialog(self):
+        import landmark_photos as lp
+        from PIL import Image, ImageTk, ImageOps
+        lm = self.lm_var.get().strip()
+        if not lm or not os.path.exists(lm):
+            messagebox.showerror("錯誤", "請先在 ② 選擇地標資料庫"); return
+        names = lp.list_landmark_names(lm)
+        if not names:
+            messagebox.showinfo("提示", "地標資料庫裡沒有地標"); return
+        folder = self.photo_dir_var.get().strip() or lp.default_folder(lm)
+        table = lp.landmark_photo_table(lm)
+        win = tk.Toplevel(self.root); win.title("管理地標照片")
+        win.configure(bg=BG); win.transient(self.root); win.geometry("760x640")
+        tk.Label(win, text=f"照片會複製到：{folder}\n檔名＝地標名稱第一行；照片會依 EXIF 轉正並自動裁切成 4:3",
+                 bg=BG, fg=DIM, justify="left", font=("Microsoft JhengHei UI", 9)).pack(anchor="w", padx=14, pady=8)
+        outer = tk.Frame(win, bg=DARK2); outer.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        cv = tk.Canvas(outer, bg=DARK2, highlightthickness=0)
+        sb = tk.Scrollbar(outer, command=cv.yview); cv.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y"); cv.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(cv, bg=DARK2); wid = cv.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Configure>", lambda e: cv.itemconfig(wid, width=e.width))
+        thumbs = []
+
+        def draw():
+            for w in inner.winfo_children():
+                w.destroy()
+            thumbs.clear()
+            for name in names:
+                row = tk.Frame(inner, bg=DARK2); row.pack(fill="x", pady=2, padx=4)
+                ph = lp.find_photo(name, table, folder)
+                if ph:
+                    try:
+                        im = ImageOps.fit(lp.open_photo(ph), (80, 60))
+                        tkimg = ImageTk.PhotoImage(im); thumbs.append(tkimg)
+                        tk.Label(row, image=tkimg, bg=DARK2).pack(side="left", padx=4)
+                    except Exception:
+                        tk.Label(row, text="（無法讀取）", width=10, bg=DARK2, fg="#ff6666").pack(side="left")
+                else:
+                    tk.Label(row, text="無照片", width=10, height=3, bg="#222240", fg=DIM,
+                             font=("Microsoft JhengHei UI", 9)).pack(side="left", padx=4)
+                tk.Label(row, text=name.replace("\n", "\n"), bg=DARK2, fg=TEXT, justify="left", anchor="w",
+                         font=("Microsoft JhengHei UI", 10)).pack(side="left", fill="x", expand=True, padx=8)
+                if ph:
+                    tk.Button(row, text="移除", bg="#4a2a2a", fg="white", relief="flat",
+                              command=lambda n=name: remove(n)).pack(side="right", padx=4)
+                tk.Button(row, text="選擇照片…" if not ph else "更換…", bg="#2a2a4a", fg="white", relief="flat",
+                          command=lambda n=name: choose(n)).pack(side="right", padx=4)
+
+        def choose(name):
+            src = filedialog.askopenfilename(
+                parent=win, title=f"選擇照片：{name.splitlines()[0]}",
+                filetypes=[("圖片", "*.jpg *.jpeg *.png *.webp *.heic *.heif *.bmp"), ("所有", "*.*")])
+            if src:
+                try:
+                    lp.open_photo(src)                     # 先確認讀得到
+                    lp.save_photo(src, name, folder)
+                except Exception as ex:
+                    messagebox.showerror("錯誤", f"無法使用這張照片：{ex}", parent=win); return
+                draw()
+
+        def remove(name):
+            if messagebox.askyesno("移除照片", f"移除「{name.splitlines()[0]}」的照片？\n（只刪除照片資料夾裡的複本）",
+                                   parent=win):
+                lp.remove_photo(name, folder)
+                draw()
+
+        draw()
+
     def _toggle_bm(self, ev=None):
         self.bm_var.set(not self.bm_var.get())
         self.bm_btn.config(text="☑" if self.bm_var.get() else "☐",
                            fg=SUCCESS if self.bm_var.get() else DIM)
+
+    def _about(self):
+        win = tk.Toplevel(self.root); win.title("版權與授權資訊")
+        win.configure(bg=BG); win.geometry("720x640")
+        txt = scrolledtext.ScrolledText(win, bg=DARK2, fg=TEXT, wrap="word", relief="flat",
+                                        font=("Microsoft JhengHei UI", 10), padx=12, pady=10)
+        txt.pack(fill="both", expand=True, padx=12, pady=12)
+        txt.insert("end", LICENSE_TEXT)
+        txt.config(state="disabled")
 
     def _sec(self, parent, text):
         row = tk.Frame(parent, bg=BG); row.pack(fill="x", padx=20, pady=(12,2))
@@ -295,6 +538,8 @@ class App:
             filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("所有", "*.*")])
         if p:
             self.lm_var.set(p)
+            import landmark_photos as lp
+            self.photo_dir_var.set(lp.default_folder(p))
 
     # ── 日誌 ──────────────────────────────────────────────────
     def _append(self, msg, color=None):
@@ -327,6 +572,11 @@ class App:
         if not self.file_rows:
             messagebox.showerror("錯誤", "請先加入至少一個 GPX 檔案")
             return
+        if self.mode_var.get() == "3d":
+            import terrain3d as t3
+            if not t3.arcgis_key() and not self._key_dialog():
+                messagebox.showinfo("提示", "3D 模式需要 ArcGIS 金鑰。可以改用 2D 模式。")
+                return
         if self.running:
             messagebox.showinfo("提示", "正在產生中，請稍候…")
             return
@@ -382,7 +632,49 @@ class App:
             self.root.after(0, lambda: self._set_progress(100, "全部完成 ✓"))
 
     def _make_one(self, gpx, title="", file_idx=1, file_total=1):
+        if self.mode_var.get() == "3d":
+            return self._make_one_3d(gpx, title, file_idx, file_total)
+        return self._make_one_2d(gpx, title, file_idx, file_total)
+
+    def _res(self):
+        W, H = 720, 1280
+        for name, w, h in self.RES_OPTIONS:
+            if name == self.res_var.get():
+                W, H = w, h
+                break
+        return W + W % 2, H + H % 2
+
+    def _make_one_3d(self, gpx, title="", file_idx=1, file_total=1):
+        import terrain3d as t3
+        W, H = self._res()
+        argv = [gpx, "--texture", "esri", "--seconds", self.sec3d_var.get() or "40", "--fps", "30",
+                "--width", str(W), "--height", str(H),
+                "--radius", self.radius_var.get() or "0.5",
+                "--photo-seconds", self.photo_sec_var.get() or "3",
+                "--output", f"{os.path.splitext(gpx)[0]} 3D ({W}x{H}).mp4"]
+        if title:
+            argv += ["--title", title]
+        lm = self.lm_var.get().strip()
+        if lm and os.path.exists(lm):
+            argv += ["--landmarks", lm]
+        else:
+            argv += ["--no-landmarks"]
+        if self.photo_dir_var.get().strip():
+            argv += ["--photos", self.photo_dir_var.get().strip()]
+        args = t3.build_parser().parse_args(argv)
+
+        def prog(frac):
+            self._set_progress((file_idx - 1 + frac) / file_total * 100,
+                               f"檔案 {file_idx}/{file_total}　本檔 {frac*100:.0f}%")
+        try:
+            out = t3.render(args, progress=prog)
+        except SystemExit as e:
+            raise RuntimeError(str(e))
+        self._append(f"   ✅ 輸出：{os.path.basename(out)}", SUCCESS)
+
+    def _make_one_2d(self, gpx, title="", file_idx=1, file_total=1):
         import gpx_to_video as gv
+        import landmark_photos as lp
         import cv2, numpy as np
         import shutil as sh, subprocess as sp, time as tm
 
@@ -401,13 +693,7 @@ class App:
                                               data["lats"], data["lons"])
 
         # 解析度：從選單找對應寬高（先算，底圖品質依此調整）
-        res_name = self.res_var.get()
-        W, H = 720, 1280   # 預設
-        for name, w, h in self.RES_OPTIONS:
-            if name == res_name:
-                W, H = w, h
-                break
-        W += W % 2; H += H % 2   # ffmpeg 需要偶數
+        W, H = self._res()
 
         # 依解析度決定底圖品質提升等級
         long_side = max(W, H)
@@ -431,6 +717,8 @@ class App:
         bg, map_px, ele_px, ele_base_y, ele_area, \
             dash_cells, is_landscape, frame_w = \
             gv.render_static(data, W, H, basemap)
+        if basemap is not None:
+            bg = gv.add_osm_credit(bg)            # OSM 授權要求：影片上標示「© OpenStreetMap contributors」
 
         n = len(data["lats"])
         ea, da = data["eles"], data["dists"]
@@ -445,6 +733,36 @@ class App:
 
         fps = 24
         total = max(60, int(n * fps / speed))
+
+        # 地標照片（與 3D 共用）：走到有照片的地標時停下來顯示照片卡片
+        holds = []
+        folder = self.photo_dir_var.get().strip() or (lp.default_folder(lm) if lm else "")
+        table = lp.landmark_photo_table(lm) if lm and os.path.exists(lm) else {}
+        try:
+            hold_n = max(1, int(round(float(self.photo_sec_var.get() or "3") * fps)))
+        except ValueError:
+            hold_n = 3 * fps
+        lat_a, lon_a = data["lats"], data["lons"]
+        for wp in (gv.WAYPOINTS if lm and os.path.exists(lm) else []):
+            name, wlat, wlon = wp[0], wp[1], wp[2]
+            ph = lp.find_photo(name, table, folder)
+            if not ph:
+                continue
+            near = int(np.argmin((lat_a - wlat) ** 2 + ((lon_a - wlon) * np.cos(np.radians(wlat))) ** 2))
+            try:
+                card = lp.PhotoCard(ph, name, W, H, min(W, H) / 720, gv.PIL_FONT)
+            except Exception as ex:
+                self._append(f"   ⚠️ 照片無法開啟：{ph}（{ex}）", "#ffaa44")
+                continue
+            holds.append((float(near), hold_n, card))
+        if holds:
+            self._append(f"   🖼️ 地標照片：{len(holds)} 張", TEXT)
+        sched, ranges = lp.build_schedule(float(n - 1), total, holds)
+        photo_at = {}
+        for a, b, card in ranges:
+            for k in range(a, b):
+                photo_at[k] = (card, (k - a) / max(1, b - a - 1), k - a, b - a)
+        total = len(sched)
         # 輸出檔名：主檔名 + 解析度後綴，例如「三尖峰 (720x1280).mp4」
         base = os.path.splitext(gpx)[0]
         out = f"{base} ({W}x{H}).mp4"
@@ -464,17 +782,22 @@ class App:
 
         t0 = tm.time()
         for i in range(total):
-            pos = max(1, int(round(i/total*(n-1))))
+            pos = max(1, int(round(sched[i])))
             frame = gv.render_frame(
                 bg, map_px, ele_px, ele_base_y, ele_area,
                 dash_cells, is_landscape, frame_w,
                 data, pos, seg_colors)
             if frame.shape[1] != W or frame.shape[0] != H:
                 frame = cv2.resize(frame, (W, H))
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if i in photo_at:
+                card, u, k, nk = photo_at[i]
+                fade = max(1, int(fps * 0.3))
+                rgb = card.draw(rgb, u, min(1.0, (k + 1) / fade, (nk - k) / fade))
             if proc:
-                proc.stdin.write(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).tobytes())
+                proc.stdin.write(rgb.tobytes())
             else:
-                cv_out.write(frame)
+                cv_out.write(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
             if i % max(1, total//10) == 0:
                 frame_pct = i / total
                 # 總進度 = (已完成檔案 + 當前檔案進度) / 總檔案數
@@ -582,6 +905,16 @@ def check_ffmpeg_and_start(root):
 
 
 def main():
+    # 命令列模式：HikeReel.exe --cli2d 參數… / HikeReel.exe --cli3d 參數…（與 gpx_to_video.py / terrain3d.py 相同）
+    if len(sys.argv) > 1 and sys.argv[1] in ("--cli2d", "--cli3d"):
+        mode = sys.argv.pop(1)
+        if mode == "--cli2d":
+            import gpx_to_video as gv
+            gv.main()
+        else:
+            import terrain3d as t3
+            t3.main()
+        return
     root = tk.Tk()
     root.withdraw()   # 先隱藏主視窗，等 ffmpeg 確認後再顯示
     check_ffmpeg_and_start(root)

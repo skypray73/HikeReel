@@ -37,8 +37,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 import gpx_to_video as g          # 沿用既有的 GPX 解析、坡度顏色、字型、ffmpeg 偵測
+from landmark_photos import PhotoCard, build_schedule, default_folder, find_photo, landmark_photo_table
 
 UA = g.HIKEREEL_UA if getattr(g, "HAS_CTX", False) else "HikeReel/1.1 (+https://github.com/skypray73/HikeReel)"
+_NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)       # 打包成視窗程式時，呼叫 ffmpeg 不要跳出黑色主控台
 DEM_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 CACHE = os.path.join(os.path.expanduser("~"), ".hikereel_tile_cache")
 R_EARTH = 6378137.0
@@ -173,13 +175,40 @@ def purge_esri_cache(root):
                 pass
 
 
+def save_arcgis_key(key):
+    """把金鑰存到 Windows 使用者環境變數 ARCGIS_API_KEY（只存在這台電腦，不會上傳），並立即對本程式生效。"""
+    key = key.strip()
+    os.environ["ARCGIS_API_KEY"] = key
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as h:
+            winreg.SetValueEx(h, "ARCGIS_API_KEY", 0, winreg.REG_SZ, key)
+        import ctypes                                   # 通知其他程式環境變數已更新
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "Environment", 0x0002, 2000, None)
+    except Exception:
+        pass
+
+
+def check_arcgis_key(key):
+    """實際下載一張圖磚確認金鑰可用。回傳 (是否可用, 說明)。"""
+    url = ESRI_URL.format(z=1, x=0, y=0) + "?token=" + key.strip()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=20) as r:
+            ok = r.status == 200 and r.headers.get("Content-Type", "").startswith("image")
+            return ok, "金鑰可用" if ok else "伺服器回應異常"
+    except urllib.error.HTTPError as e:
+        return False, f"金鑰無效或權限不足（HTTP {e.code}）。建立金鑰時請開啟「底圖 → 靜態底圖圖磚」權限。"
+    except Exception as e:
+        return False, f"無法連線到 Esri（{e}）"
+
+
 def fetch_esri(xmin, ymin, xmax, ymax, max_tiles):
     """Esri World Imagery：圖磚依 HTTP 標頭最多暫存 24 小時，同一天重做不必重新下載，過期自動刪除。"""
     from concurrent.futures import ThreadPoolExecutor
     import io
     key = arcgis_key()
     if not key:
-        sys.exit("❌ 找不到 ArcGIS 金鑰。請先在 PowerShell 執行：setx ARCGIS_API_KEY \"你的金鑰\"")
+        raise RuntimeError("找不到 ArcGIS 金鑰。請在 HikeReel 選 3D 時輸入，或在 PowerShell 執行：setx ARCGIS_API_KEY \"你的金鑰\"")
     from pyproj import Transformer
     to_ll = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
     w, s_ = to_ll.transform(xmin, ymin)
@@ -630,128 +659,6 @@ class Hiker:
         self.shadow.user_matrix = _mat(t=(pos[0], pos[1], pos[2] + 0.02 * self.S), sc=self.S)
 
 
-# ── 地標照片 ──────────────────────────────────────────────
-PHOTO_EXT = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp")
-
-
-def landmark_photo_table(path):
-    """地標庫（.xlsx / .csv）裡若有「照片」欄，回傳 {名稱: 照片路徑}（相對路徑以地標庫所在資料夾為準）。"""
-    out = {}
-    try:
-        rows = []
-        if path.lower().endswith((".xlsx", ".xls")):
-            import openpyxl
-            ws = openpyxl.load_workbook(path, data_only=True).active
-            allr = list(ws.iter_rows(values_only=True))
-            head = [str(h).strip().lower() if h else "" for h in allr[0]]
-            rows = [dict(zip(head, r)) for r in allr[1:]]
-        elif path.lower().endswith(".csv"):
-            import csv
-            with open(path, newline="", encoding="utf-8-sig") as f:
-                rows = [{k.strip().lower(): v for k, v in r.items()} for r in csv.DictReader(f)]
-        base = os.path.dirname(os.path.abspath(path))
-        for r in rows:
-            name = next((r[k] for k in ("名稱", "name", "地標", "landmark") if r.get(k)), None)
-            ph = next((r[k] for k in ("照片", "photo", "圖片", "image", "picture") if r.get(k)), None)
-            if name and ph:
-                ph = str(ph).strip()
-                out[str(name)] = ph if os.path.isabs(ph) else os.path.join(base, ph)
-    except Exception:
-        pass
-    return out
-
-
-def find_photo(name, table, folder):
-    """依序找：地標庫的「照片」欄 → 照片資料夾裡檔名等於地標名稱（任一行，不分大小寫）的圖片。"""
-    if name in table and os.path.isfile(table[name]):
-        return table[name]
-    if not folder or not os.path.isdir(folder):
-        return None
-    keys = {name.replace("\n", " ").strip().lower(), name.replace("\n", "").strip().lower()}
-    keys |= {t.strip().lower() for t in name.split("\n") if t.strip()}
-    for f in sorted(os.listdir(folder)):
-        stem, ext = os.path.splitext(f)
-        if ext.lower() in PHOTO_EXT and stem.strip().lower() in keys:
-            return os.path.join(folder, f)
-    return None
-
-
-def open_photo(path):
-    from PIL import ImageOps
-    if path.lower().endswith((".heic", ".heif")):
-        try:
-            import pillow_heif
-            pillow_heif.register_heif_opener()
-        except Exception:
-            pass
-    im = Image.open(path)
-    return ImageOps.exif_transpose(im).convert("RGB")             # 依 EXIF 轉正（手機直拍照片）
-
-
-class PhotoCard:
-    """走到地標時顯示的照片卡片：自動依卡片比例置中裁切、淡入淡出、緩慢推近（Ken Burns）。"""
-    ZOOM = 0.08
-
-    def __init__(self, path, name, W, H, scale):
-        from PIL import ImageOps
-        land = W > H
-        pad = int(min(W, H) * 0.035)
-        self.cw = int(W * 0.40) if land else int(W * 0.86)
-        self.ch = int(self.cw * 3 / 4)                               # 4:3 卡片
-        self.x = W - pad - self.cw if land else (W - self.cw) // 2
-        self.y = int(H * 0.12) if land else int(H * 0.13)
-        big = (int(self.cw * (1 + self.ZOOM)), int(self.ch * (1 + self.ZOOM)))
-        self.src = ImageOps.fit(open_photo(path), big, Image.LANCZOS, centering=(0.5, 0.45))   # 略偏上：保留天空與山稜
-        self.lines = name.split("\n")
-        self.scale = scale
-
-    def draw(self, frame, u, alpha):
-        """u：停留進度 0~1；alpha：淡入淡出 0~1。"""
-        if alpha <= 0.01:
-            return frame
-        z = 1 + self.ZOOM * u
-        bw, bh = self.src.size
-        cw, ch = int(bw / z), int(bh / z)
-        x0, y0 = (bw - cw) // 2, int((bh - ch) * 0.45)
-        photo = self.src.crop((x0, y0, x0 + cw, y0 + ch)).resize((self.cw, self.ch), Image.LANCZOS)
-        fnt = g.PIL_FONT
-        cap_h = int(fnt.size * 1.35 * len(self.lines) + 16 * self.scale)
-        bd = max(3, int(4 * self.scale))
-        card = Image.new("RGBA", (self.cw + 2 * bd, self.ch + cap_h + 2 * bd), (255, 255, 255, 255))
-        card.paste(photo, (bd, bd))
-        dr = ImageDraw.Draw(card)
-        dr.rectangle([bd, self.ch + bd, self.cw + bd, self.ch + bd + cap_h], fill=(15, 20, 40, 255))
-        for k, t in enumerate(self.lines):
-            dr.text((card.width / 2, self.ch + bd + 8 * self.scale + fnt.size * 1.35 * k), t, font=fnt,
-                    fill=(255, 255, 255) if k == 0 else (200, 205, 225), anchor="ma")
-        mask = Image.new("L", card.size, 0)
-        ImageDraw.Draw(mask).rounded_rectangle([0, 0, card.width - 1, card.height - 1], radius=int(14 * self.scale),
-                                               fill=int(255 * alpha))
-        im = Image.fromarray(frame).convert("RGBA")
-        sh = Image.new("RGBA", im.size, (0, 0, 0, 0))               # 陰影
-        ImageDraw.Draw(sh).rounded_rectangle([self.x + 6, self.y + 8, self.x + card.width + 6, self.y + card.height + 8],
-                                             radius=int(14 * self.scale), fill=(0, 0, 0, int(90 * alpha)))
-        im = Image.alpha_composite(im, sh)
-        im.paste(card, (self.x, self.y), mask)
-        return np.asarray(im.convert("RGB"))
-
-
-def build_schedule(L, frames_move, holds):
-    """把「沿路線移動」的幀和「在地標停留」的幀排在一起。
-    holds：[(距離 m, 停留幀數, 物件)]；回傳 (每幀的路線距離, [(開始幀, 結束幀, 物件)])。"""
-    s_move = np.linspace(0, L, frames_move)
-    out, ranges, hi = [], [], 0
-    holds = sorted(holds, key=lambda h: h[0])
-    for v in s_move:
-        while hi < len(holds) and holds[hi][0] <= v:
-            d, n, obj = holds[hi]
-            ranges.append((len(out), len(out) + n, obj))
-            out += [d] * n
-            hi += 1
-        out.append(v)
-    return np.array(out), ranges
-
-
 # ── HUD ───────────────────────────────────────────────────
 def draw_hud(frame, data, idx, width, height, title, credit, prof):
     im = Image.fromarray(frame)
@@ -816,7 +723,7 @@ HAZE_HEX = "#c8d8e8"
 HAZE_RGB = np.array([200, 216, 232], np.float32)
 
 
-def render(args):
+def render(args, progress=None):
     import pyvista as pv
     global vtkFloatArray, vtk_to_numpy
     from vtkmodules.vtkCommonCore import vtkFloatArray
@@ -857,13 +764,13 @@ def render(args):
     holds = []
     if lm and not args.no_photos:
         table = landmark_photo_table(lm_path)
-        folder = args.photos or os.path.join(os.path.dirname(os.path.abspath(lm_path)), "landmark_photos")
+        folder = args.photos or default_folder(lm_path)
         hold_n = max(1, int(round(args.photo_seconds * args.fps)))
         for it in lm.items:
             ph = find_photo(it["name"], table, folder)
             if ph:
                 try:
-                    card = PhotoCard(ph, it["name"], W, H, min(W, H) / 720)
+                    card = PhotoCard(ph, it["name"], W, H, min(W, H) / 720, g.PIL_FONT)
                 except Exception as ex:
                     print(f"   ⚠️  照片無法開啟：{ph}（{ex}）")
                     continue
@@ -939,15 +846,22 @@ def render(args):
             ff = imageio_ffmpeg.get_ffmpeg_exe()
             enc, hw = "libx264", "CPU"
         except Exception:
-            sys.exit("❌ 找不到 ffmpeg。請安裝：winget install Gyan.FFmpeg")
-    if args.no_gpu:
-        enc = "libx264"
-    cmd = [ff, "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(args.fps),
-           "-i", "-", "-c:v", enc or "libx264"]
-    cmd += (["-preset", "p4", "-rc", "vbr", "-cq", "26", "-b:v", "0"] if enc == "h264_nvenc"
-            else ["-preset", "veryfast", "-crf", "22"])
-    cmd += ["-pix_fmt", "yuv420p", out]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ff = None
+    proc = cv_out = None
+    if ff:
+        if args.no_gpu:
+            enc = "libx264"
+        cmd = [ff, "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(args.fps),
+               "-i", "-", "-c:v", enc or "libx264"]
+        cmd += (["-preset", "p4", "-rc", "vbr", "-cq", "26", "-b:v", "0"] if enc == "h264_nvenc"
+                else ["-preset", "veryfast", "-crf", "22"])
+        cmd += ["-pix_fmt", "yuv420p", out]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                creationflags=_NOWIN)
+    else:
+        print("   ⚠️  找不到 ffmpeg，改用內建編碼（相容性較低）")
+        enc = "mp4v"
+        cv_out = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*"mp4v"), args.fps, (W, H))
 
     print(f"🎬 {W}×{H}，{frames} 幀（{frames / args.fps:.0f} 秒），編碼 {enc}")
     t0 = time.time()
@@ -1002,19 +916,28 @@ def render(args):
             card, u, k, nk = photo_at[f]
             fade = max(1, int(args.fps * 0.3))
             img = card.draw(img, u, min(1.0, (k + 1) / fade, (nk - k) / fade))
-        proc.stdin.write(img.tobytes())
+        if proc:
+            proc.stdin.write(img.tobytes())
+        else:
+            cv_out.write(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         if f % max(1, frames // 20) == 0:
             el = time.time() - t0
-            print(f"   {f / frames * 100:5.1f}%  {f / max(el, 1e-3):.1f} 幀/s", end="\r")
-    proc.stdin.close()
-    proc.wait()
+            if progress:
+                progress(f / frames)
+            else:
+                print(f"   {f / frames * 100:5.1f}%  {f / max(el, 1e-3):.1f} 幀/s", end="\r")
+    if proc:
+        proc.stdin.close()
+        proc.wait()
+    if cv_out:
+        cv_out.release()
     pl.close()
     print(f"\n✅ 完成：{out}（{time.time() - t0:.0f} 秒）")
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser(description="GPX → 3D 地形飛行影片（原型）")
+def build_parser():
+    ap = argparse.ArgumentParser(description="GPX → 3D 地形飛行影片")
     ap.add_argument("gpx")
     ap.add_argument("--title", default=None)
     ap.add_argument("--output", default=None)
@@ -1042,7 +965,11 @@ def main():
     ap.add_argument("--no-outer", action="store_true", help="不加外圍地形")
     ap.add_argument("--no-haze", action="store_true", help="不加遠景霧化")
     ap.add_argument("--marker", choices=["hiker", "dot"], default="hiker", help="目前位置標記：登山小人或紅點")
-    render(ap.parse_args())
+    return ap
+
+
+def main():
+    render(build_parser().parse_args())
 
 
 if __name__ == "__main__":
