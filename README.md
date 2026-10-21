@@ -26,6 +26,7 @@ HikeReel_v2.0.4/
 > - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.4`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
+> - 防毒軟體（例如 Norton）可能把它誤判為「未知／高風險檔案」，說明與回報方式見下方「🛡️ 防毒軟體誤判說明與回報」。
 
 ---
 
@@ -266,6 +267,33 @@ winget install Gyan.FFmpeg --source winget
 ## 打包成 .exe
 
 請參閱 `打包說明.txt`（v2.0 起改為「主程式 + `_internal` 套件資料夾」，主程式小、啟動快）。
+
+---
+
+## 🛡️ 防毒軟體誤判說明與回報
+
+HikeReel 是用 PyInstaller 打包的 Windows 程式，目前**沒有程式碼簽章**，而且是新發佈的檔案、使用者還不多。Norton、Windows SmartScreen 這類「信譽制」防毒會因此把它當成「未知檔案」，有時會依行為保守地封鎖（例如 Norton 的 `IDP.HELU.*`、偵測元件為「行為防護」，畫面上會寫「使用者數目未知」）。這類情況通常是**誤判**，但我**無法保證每一套防毒軟體都不會誤報**。
+
+**你可以自行確認來源**
+- HikeReel 是開源專案，原始碼公開在本儲存庫；Release 的 zip 是由 [GitHub Actions](https://github.com/skypray73/HikeReel/actions) 依原始碼自動建置，Release 說明最後附有 zip 的 **SHA-256**，可核對下載的檔案沒有被更換：
+
+  ```
+  Get-FileHash HikeReel_v2.0.4_Windows.zip -Algorithm SHA256
+  ```
+
+- 不放心也可以不用 exe，改從原始碼執行（見上方「從原始碼執行」）。
+- 程式只會連線下載地圖圖磚（OpenStreetMap、Esri、AWS）；選擇時才下載 ffmpeg（來源與校驗見上方 ffmpeg 一節）。它也會把你輸入的 ArcGIS 金鑰存到這台電腦的使用者環境變數 `ARCGIS_API_KEY`，不會上傳。
+
+**被擋住時**
+1. 先確認檔案是從本儲存庫的 Releases 下載，且 SHA-256 相符。
+2. 在你的防毒軟體裡把 `HikeReel` 資料夾加入例外或從隔離區還原。請不要因此關閉整個防毒。
+3. **請向防毒廠商回報誤判**，檔案被標示為安全後，所有使用者都會受益：
+   - Norton：<https://submit.norton.com>
+   - Microsoft Defender / SmartScreen：<https://www.microsoft.com/en-us/wdsi/filesubmission>
+   - 其他防毒軟體：到該廠商的「誤判回報（false positive）」頁面提交。
+4. 也歡迎到本儲存庫的 [Issues](https://github.com/skypray73/HikeReel/issues) 回報，附上防毒名稱與偵測名稱，方便追蹤。
+
+我們正規劃為發佈檔加上程式碼簽章，以降低誤判；簽章啟用前，請依上面方式處理。
 
 ---
 

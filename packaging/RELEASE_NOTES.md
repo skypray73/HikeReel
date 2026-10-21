@@ -9,6 +9,7 @@ GPX 健行軌跡 → 動態影片。v2.0 新增 **3D 地形飛行模式**與**�
   - 授權：該建置為 **GPL v3**；ffmpeg 是 [FFmpeg 專案](https://ffmpeg.org/)的獨立軟體，不是 HikeReel 的一部分，HikeReel 只以外部程式呼叫、未修改。提示視窗、README、程式內「版權與授權資訊」都有寫明。
   - 只會放 `ffmpeg.exe`、`ffmpeg_LICENSE.txt`、`ffmpeg_SOURCE.txt` 到 HikeReel 資料夾（不能寫入時放 `%LOCALAPPDATA%\HikeReel\ffmpeg`）；不想用時刪除 `ffmpeg.exe` 即可。
 - 「用 winget 安裝」改為 `winget install Gyan.FFmpeg --source winget`，避開 `msstore` 來源憑證錯誤（`0x8a15005e`）。
+- README 新增「防毒軟體誤判說明與回報」；Release 說明自動附上 zip 的 SHA-256。
 - 地標資料庫 `locationGPS.xlsx` 更新（部分地標改名，例如「停車場」→「三尖峰停車場」、「三尖峰側面」→「拉瓦雷多埡口」）。
 
 ### 🔧 v2.0.3 更新
@@ -46,6 +47,7 @@ HikeReel_v2.0.4/
 
 > - v2.0 起改為「主程式＋套件資料夾」，主程式本身很小、啟動更快；請保留 `_internal` 資料夾。
 > - 執行檔未經程式碼簽章，Windows SmartScreen 可能顯示警告，請按「其他資訊」→「仍要執行」。
+> - 防毒軟體（例如 Norton）可能把未簽章的新檔案誤判為「未知／高風險」。請核對本頁最後的 **SHA-256**，被擋時可加入例外並向廠商回報誤判，詳見 [README](https://github.com/skypray73/HikeReel#️-防毒軟體誤判說明與回報)。
 > - 建議安裝 ffmpeg：`winget install Gyan.FFmpeg --source winget`。
 > - 執行檔由 GitHub Actions 依本儲存庫原始碼自動編譯。
 

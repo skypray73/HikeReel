@@ -26,3 +26,10 @@ https://github.com/skypray73/HikeReel
 - 3D 地形：AWS Terrain Tiles（Mapzen，含 SRTM 等資料）。
 - 影片畫面上的來源標示，公開分享時請保留。
 - 程式內「版權與授權資訊」有完整的第三方元件授權清單。
+
+【防毒軟體誤判】
+HikeReel 沒有程式碼簽章、使用者還不多，Norton 等信譽制防毒可能把它判為「未知／高風險」而封鎖，這通常是誤判。
+- 請從 https://github.com/skypray73/HikeReel/releases 下載，並用 Release 說明裡的 SHA-256 核對 zip：
+  Get-FileHash HikeReel_v2.0.4_Windows.zip -Algorithm SHA256
+- 被擋時可把 HikeReel 資料夾加入防毒例外，並向廠商回報誤判（Norton：https://submit.norton.com ；
+  Microsoft：https://www.microsoft.com/en-us/wdsi/filesubmission）。完整說明見 GitHub 上的 README。
