@@ -1,8 +1,8 @@
-HikeReel v2.1.1（2026/10/25）— GPX 健行軌跡 → 動態影片
+HikeReel v2.1.2（2026/10/25）— GPX 健行軌跡 → 動態影片
 https://github.com/skypray73/HikeReel
 
 【開始使用】
-1. 整個資料夾放在純英文路徑（例如 D:\HikeReel_v2.1.1），不要只複製 HikeReel.exe，
+1. 整個資料夾放在純英文路徑（例如 D:\HikeReel_v2.1.2），不要只複製 HikeReel.exe，
    _internal 資料夾是程式需要的套件，不能刪除或移動。
 2. 執行 HikeReel.exe。第一次開啟若出現 SmartScreen 警告，按「其他資訊」→「仍要執行」。
 3. 第一次啟動若提示找不到 ffmpeg，按「同意並下載 ffmpeg」即可（來源 GitHub：GyanD/codexffmpeg〔備援 gyan.dev〕，GPL v3，SHA-256 驗證，
@@ -13,6 +13,12 @@ https://github.com/skypray73/HikeReel
 - 2D：OpenStreetMap 平面地圖，免金鑰。
 - 3D：Esri 高解析衛星影像＋地形飛行，需要你自己的 ArcGIS Location Platform 金鑰（免費申請），
   第一次選 3D 時程式會提示輸入。金鑰只存在你這台電腦，不會上傳。
+
+【3D 山景鏡頭（v2.1.2）】
+- 預設從移動點後上方低空跟隨，視線微仰 3 度，呈現前方山稜與天際線。
+- 後方山坡擋住時先平順拉近，必要時升高並降低仰角，保留小人在畫面內。
+- 開場與結尾仍使用整段路線總覽；照片停留時的構圖也配合新角度調整。
+- 命令列 --look-up 0 可改平視、負值可改俯視；--pitch 調整高度比（預設 0.10）。
 
 【地標與照片】
 - locationGPS.xlsx 是地標資料庫範本（名稱、座標）。
@@ -46,6 +52,6 @@ https://github.com/skypray73/HikeReel
 【防毒軟體誤判】
 HikeReel 沒有程式碼簽章、使用者還不多，Norton 等信譽制防毒可能把它判為「未知／高風險」而封鎖，這通常是誤判。
 - 請從 https://github.com/skypray73/HikeReel/releases 下載，並用 Release 說明裡的 SHA-256 核對 zip：
-  Get-FileHash HikeReel_v2.1.1_Windows.zip -Algorithm SHA256
+  Get-FileHash HikeReel_v2.1.2_Windows.zip -Algorithm SHA256
 - 被擋時可把 HikeReel 資料夾加入防毒例外，並向廠商回報誤判（Norton：https://submit.norton.com ；
   Microsoft：https://www.microsoft.com/en-us/wdsi/filesubmission）。完整說明見 GitHub 上的 README。
