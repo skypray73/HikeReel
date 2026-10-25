@@ -940,7 +940,7 @@ def render(args, progress=None):
     if not args.no_photos:
         for photo in match_photos(folder, data["lats"], data["lons"], args.radius):
             try:
-                card = PhotoCard(photo["path"], photo["name"], W, H, min(W, H) / 720, g.PIL_FONT)
+                card = PhotoCard(photo["path"], photo["caption"], W, H, min(W, H) / 720, g.PIL_FONT)
                 d = float(np.interp(photo["near"], np.arange(n), data["dists"]) * 1000.0)
                 holds.append((d, hold_n, card))
             except Exception as ex:

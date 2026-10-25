@@ -116,7 +116,7 @@ class PhotoCard:
         self.y = int(H * 0.12) if land else int(H * 0.13)
         big = (int(self.cw * (1 + self.ZOOM)), int(self.ch * (1 + self.ZOOM)))
         self.src = ImageOps.fit(open_photo(path), big, Image.LANCZOS, centering=(0.5, 0.45))   # 略偏上：保留天空與山稜
-        self.lines = name.split("\n")
+        self.lines = [line for line in str(name or "").splitlines() if line.strip()]
         self.scale = scale
         self.font = font
 
@@ -130,12 +130,13 @@ class PhotoCard:
         x0, y0 = (bw - cw) // 2, int((bh - ch) * 0.45)
         photo = self.src.crop((x0, y0, x0 + cw, y0 + ch)).resize((self.cw, self.ch), Image.LANCZOS)
         fnt = self.font
-        cap_h = int(fnt.size * 1.35 * len(self.lines) + 16 * self.scale)
+        cap_h = int(fnt.size * 1.35 * len(self.lines) + 16 * self.scale) if self.lines else 0
         bd = max(3, int(4 * self.scale))
         card = Image.new("RGBA", (self.cw + 2 * bd, self.ch + cap_h + 2 * bd), (255, 255, 255, 255))
         card.paste(photo, (bd, bd))
         dr = ImageDraw.Draw(card)
-        dr.rectangle([bd, self.ch + bd, self.cw + bd, self.ch + bd + cap_h], fill=(15, 20, 40, 255))
+        if self.lines:
+            dr.rectangle([bd, self.ch + bd, self.cw + bd, self.ch + bd + cap_h], fill=(15, 20, 40, 255))
         for k, t in enumerate(self.lines):
             dr.text((card.width / 2, self.ch + bd + 8 * self.scale + fnt.size * 1.35 * k), t, font=fnt,
                     fill=(255, 255, 255) if k == 0 else (200, 205, 225), anchor="ma")

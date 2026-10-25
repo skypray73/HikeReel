@@ -43,16 +43,17 @@ def show_dialog(app):
         tk.Label(preview_row, text="先在主視窗加入 GPX 才能預覽距離").pack(side="left")
     body = tk.Frame(win)
     body.pack(fill="both", expand=True, padx=14, pady=6)
-    tree = ttk.Treeview(body, columns=("name", "lat", "lon", "distance", "status"), show="headings", selectmode="extended")
-    for key, title, width in (("name", "照片名稱", 240), ("lat", "緯度", 110), ("lon", "經度", 110),
-                              ("distance", "離軌跡", 100), ("status", "狀態", 230)):
+    tree = ttk.Treeview(body, columns=("name", "caption", "lat", "lon", "distance", "status"), show="headings", selectmode="extended")
+    for key, title, width in (("name", "照片名稱（僅清單）", 180), ("caption", "影片標題（選填）", 150),
+                              ("lat", "緯度", 100), ("lon", "經度", 100),
+                              ("distance", "離軌跡", 90), ("status", "狀態", 230)):
         tree.heading(key, text=title)
         tree.column(key, width=width, minwidth=70)
     bar = ttk.Scrollbar(body, command=tree.yview)
     tree.configure(yscrollcommand=bar.set)
     bar.pack(side="right", fill="y")
     tree.pack(fill="both", expand=True)
-    status = tk.StringVar(value="可一次選取多張照片；同一位置的照片會依序顯示。")
+    status = tk.StringVar(value="影片預設只顯示照片、不顯示檔名；需要說明時可設定影片標題，留空即不顯示。")
     tk.Label(win, textvariable=status, anchor="w", wraplength=870).pack(fill="x", padx=14, pady=3)
     buttons = tk.Frame(win)
     buttons.pack(fill="x", padx=14, pady=(4, 12))
@@ -86,7 +87,7 @@ def show_dialog(app):
                     state = "會顯示" if offset <= radius * 1000 + 1e-6 else "超出篩選半徑：略過"
                 if not gps.asset_path(folder, record).is_file():
                     state = "照片檔案遺失：請重新匯入"
-                tree.insert("", "end", iid=record["id"], values=(record["name"],
+                tree.insert("", "end", iid=record["id"], values=(record["name"], record.get("caption", ""),
                             f"{lat:.7f}" if lat is not None else "—",
                             f"{lon:.7f}" if lon is not None else "—", distance, state))
         except Exception as ex:
@@ -157,11 +158,12 @@ def show_dialog(app):
         record = selected_one()
         if record is None:
             return
-        name = simpledialog.askstring("照片名稱", "影片照片卡片顯示的名稱：", initialvalue=record["name"], parent=win)
-        if not name or not name.strip():
+        caption = simpledialog.askstring("影片標題（選填）", "只在影片顯示自行填寫的標題；留空可隱藏標題列：",
+                                         initialvalue=record.get("caption", ""), parent=win)
+        if caption is None:
             return
         try:
-            gps.save_catalog(folder, [dict(r, name=name.strip()) if r["id"] == record["id"] else r for r in records])
+            gps.save_catalog(folder, [dict(r, caption=caption.strip()) if r["id"] == record["id"] else r for r in records])
             refresh()
         except Exception as ex:
             messagebox.showerror("儲存失敗", str(ex), parent=win)
@@ -187,7 +189,7 @@ def show_dialog(app):
 
     add_button = ttk.Button(buttons, text="＋ 匯入照片", command=add)
     edit_button = ttk.Button(buttons, text="設定／補上 GPS", command=edit)
-    rename_button = ttk.Button(buttons, text="修改名稱", command=rename)
+    rename_button = ttk.Button(buttons, text="設定影片標題", command=rename)
     remove_button = ttk.Button(buttons, text="移除選取", command=remove)
     for button in (add_button, edit_button, rename_button, remove_button):
         button.pack(side="left", padx=(0, 8))

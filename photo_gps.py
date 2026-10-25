@@ -120,7 +120,7 @@ def import_photos(paths, folder):
             ident = uuid.uuid4().hex
             relative = f"{ASSETS}/{ident}{src.suffix.lower()}"
             shutil.copy2(src, Path(folder) / relative)
-            record = dict(id=ident, name=src.stem, file=relative, sha256=digest,
+            record = dict(id=ident, name=src.stem, caption="", file=relative, sha256=digest,
                           lat=coords[0] if coords else None, lon=coords[1] if coords else None,
                           source="exif" if coords else "missing")
             records.append(record)
@@ -176,7 +176,9 @@ def match_photos(folder, lats, lons, radius_km=0.5, log=print):
             continue
         near, offset = nearest_route_position(record["lat"], record["lon"], lats, lons)
         if offset <= radius_km * 1000 + 1e-6:
-            matches.append(dict(record, path=str(path), near=near, offset_m=offset))
+            # Old catalogues have no caption: never fall back to the filename.
+            caption = str(record.get("caption") or "").strip()
+            matches.append(dict(record, caption=caption, path=str(path), near=near, offset_m=offset))
         else:
             log(f"   GPS 照片略過（離軌跡 {offset:.0f} m，超過 {radius_km * 1000:g} m）：{name}")
     matches.sort(key=lambda r: r["near"])

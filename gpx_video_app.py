@@ -25,7 +25,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 RELEASE_DATE = "2026/10/25"
 
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"
@@ -785,7 +785,7 @@ class App:
         if folder:
             for photo in gps.match_photos(folder, lat_a, lon_a, radius, self._append):
                 try:
-                    card = lp.PhotoCard(photo["path"], photo["name"], W, H, min(W, H) / 720, gv.PIL_FONT)
+                    card = lp.PhotoCard(photo["path"], photo["caption"], W, H, min(W, H) / 720, gv.PIL_FONT)
                     holds.append((photo["near"], hold_n, card))
                 except Exception as ex:
                     self._append(f"   ⚠️ 照片無法開啟：{photo['name']}（{ex}）", "#ffaa44")

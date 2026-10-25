@@ -1,4 +1,4 @@
-# HikeReel v2.1.0
+# HikeReel v2.1.1
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
@@ -13,10 +13,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.1.0_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.1.1_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.1.0/
+HikeReel_v2.1.1/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -24,7 +24,7 @@ HikeReel_v2.1.0/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.1.0`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.1.1`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 > - 防毒軟體（例如 Norton）可能把它誤判為「未知／高風險檔案」，說明與回報方式見下方「🛡️ 防毒軟體誤判說明與回報」。
@@ -110,8 +110,9 @@ HikeReel_v2.1.0/
 ## 🖼️ 地標照片（2D、3D 都適用）
 
 - **直接匯入照片（v2.1 新增）**：按「📍 匯入 GPS 照片…」→「＋ 匯入照片」，可一次選取多張。程式讀取照片 EXIF 的 GPS 經緯度，自動配對到 GPX 最近的線段，不需要 Excel 地標庫。
-- 匯入視窗會列出經緯度、離所選 GPX 的距離與是否會顯示；多條 GPX 可切換預覽。照片名稱預設使用原檔名，可按「修改名稱」調整卡片標題。
+- 匯入視窗會列出經緯度、離所選 GPX 的距離與是否會顯示；多條 GPX 可切換預覽。清單中的照片名稱僅用來辨識檔案，**不會顯示在影片中**。GPS 照片預設只顯示照片，不顯示檔名或空白標題列；需要說明時按「設定影片標題」，留空即可隱藏。
 - **沒有 GPS 的照片不會猜測位置**：清單會提示「無 GPS」，可按「設定／補上 GPS」輸入 `緯度, 經度`；未補座標的照片在產片時略過。照片須保留原始 EXIF；通訊軟體轉傳或截圖可能已移除定位。
+- v2.1.0 已匯入的照片清單可直接沿用，預設同樣不顯示檔名。先前修改過的清單名稱仍保留；若要在影片顯示說明，請於新版「設定影片標題」填寫。Excel 地標照片則保留原有地標名稱。
 - GPS 照片與 Excel 地標可以同時使用；同一位置的多張照片依序顯示，每張停留時間共用「每張停留（秒）」。
 - 照片複本儲存在所選照片資料夾內的 `gps_imports/`，座標清單為 `gps_photos.json`，重新開啟程式後選同一資料夾即可繼續使用。原始照片不修改；相同內容重複匯入不會新增。照片與座標只在本機處理，HikeReel 不會上傳，也不會放入 GitHub Release。
 - GUI：按「🖼 管理地標照片…」，在每個地標旁「選擇照片…」，照片會複製到地標庫旁的 `landmark_photos` 資料夾（檔名＝地標名稱第一行）。
@@ -293,7 +294,7 @@ HikeReel 是用 PyInstaller 打包的 Windows 程式，目前**沒有程式碼�
 - HikeReel 是開源專案，原始碼公開在本儲存庫；Release 的 zip 是由 [GitHub Actions](https://github.com/skypray73/HikeReel/actions) 依原始碼自動建置，Release 說明最後附有 zip 的 **SHA-256**，可核對下載的檔案沒有被更換：
 
   ```
-  Get-FileHash HikeReel_v2.1.0_Windows.zip -Algorithm SHA256
+  Get-FileHash HikeReel_v2.1.1_Windows.zip -Algorithm SHA256
   ```
 
 - 不放心也可以不用 exe，改從原始碼執行（見上方「從原始碼執行」）。

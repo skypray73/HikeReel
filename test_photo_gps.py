@@ -6,11 +6,11 @@ import tempfile
 import unittest
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFont
 from PIL.TiffImagePlugin import IFDRational
 
 import photo_gps as gps
-from landmark_photos import build_schedule
+from landmark_photos import PhotoCard, build_schedule
 
 
 def make_photo(path, lat=None, lon=None):
@@ -51,6 +51,60 @@ class PhotoGpsTests(unittest.TestCase):
         report = gps.import_photos([path], self.folder)
         self.assertEqual(report["missing_gps"], 1)
         self.assertEqual(gps.match_photos(self.folder, [46, 47], [12, 12], log=lambda _: None), [])
+
+    def test_new_import_has_no_video_caption(self):
+        path = self.root / "IMG_1234.jpg"
+        make_photo(path, 46.62, 12.3)
+        gps.import_photos([path], self.folder)
+        record = gps.load_catalog(self.folder)[0]
+        self.assertEqual(record["name"], "IMG_1234")
+        self.assertEqual(record["caption"], "")
+        match = gps.match_photos(self.folder, [46.61, 46.63], [12.3, 12.3], log=lambda _: None)[0]
+        self.assertEqual(match["caption"], "")
+
+    def test_v210_catalogue_never_uses_filename_as_caption(self):
+        path = self.root / "IMG_5678.jpg"
+        make_photo(path, 46.62, 12.3)
+        gps.import_photos([path], self.folder)
+        records = gps.load_catalog(self.folder)
+        del records[0]["caption"]
+        gps.save_catalog(self.folder, records)
+        match = gps.match_photos(self.folder, [46.61, 46.63], [12.3, 12.3], log=lambda _: None)[0]
+        self.assertEqual(match["name"], "IMG_5678")
+        self.assertEqual(match["caption"], "")
+
+    def test_optional_caption_can_be_saved_and_cleared(self):
+        path = self.root / "IMG_1234.jpg"
+        make_photo(path, 46.62, 12.3)
+        gps.import_photos([path], self.folder)
+        records = gps.load_catalog(self.folder)
+        for caption in ("三尖峰北壁", ""):
+            records[0]["caption"] = caption
+            gps.save_catalog(self.folder, records)
+            match = gps.match_photos(self.folder, [46.61, 46.63], [12.3, 12.3], log=lambda _: None)[0]
+            self.assertEqual(match["caption"], caption)
+            self.assertEqual(match["name"], "IMG_1234")
+
+    def test_card_without_caption_omits_dark_title_bar(self):
+        path = self.root / "image.jpg"
+        make_photo(path)
+        frame = np.full((640, 360, 3), (40, 80, 120), dtype=np.uint8)
+        font = ImageFont.load_default(size=18)
+        for caption in ("", "   ", None):
+            card = PhotoCard(str(path), caption, 360, 640, .5, font)
+            self.assertEqual(card.lines, [])
+            result = card.draw(frame, .5, 1)
+            navy = np.all(result == (15, 20, 40), axis=2)
+            self.assertEqual(np.count_nonzero(navy), 0)
+
+    def test_excel_landmark_caption_still_renders(self):
+        path = self.root / "image.jpg"
+        make_photo(path)
+        font = ImageFont.load_default(size=18)
+        card = PhotoCard(str(path), "Landmark\nRifugio", 360, 640, .5, font)
+        self.assertEqual(card.lines, ["Landmark", "Rifugio"])
+        result = card.draw(np.zeros((640, 360, 3), dtype=np.uint8), .5, 1)
+        self.assertGreater(np.count_nonzero(np.all(result == (15, 20, 40), axis=2)), 100)
 
     def test_import_copies_and_deduplicates_and_restores_missing_copy(self):
         path = self.root / "三尖峰.jpg"
