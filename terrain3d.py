@@ -13,6 +13,7 @@ HikeReel 3D 地形飛行模式（原型）  —  MIT License
   python terrain3d.py track.gpx --title "玉山主峰" --texture topo --exaggeration 1.6
 """
 import argparse
+import collections
 import math
 import os
 import subprocess
@@ -687,8 +688,8 @@ class Landmarks:
         dst = base[y0:y1, x0:x1]
         dst[:] = dst * (1 - a) + src[..., :3] * alpha
 
-    def draw(self, img, ren, cam, idx, W, H, scale):
-        base = img.astype(np.float32)
+    def layout(self, ren, cam, idx, W, H, scale):
+        """投影、遮擋、避免重疊並更新淡入淡出；回傳這一幀要畫的 [(圖, x, y, 透明度)]。需在 VTK 執行緒呼叫。"""
         cands = []
         for it in self.items:
             ren.SetWorldPoint(it["x"], it["y"], it["z"], 1.0)
@@ -713,12 +714,42 @@ class Landmarks:
                 placed.append(box)
             it["shown"] = show
             it["alpha"] += ((1.0 if show else 0.0) - it["alpha"]) * 0.2    # 淡入淡出
-        for it, on, spr, x, y, box, _ in sorted(cands, key=lambda c: -c[6]):  # 遠的先畫
+        todo = []
+        for it, on, spr, x, y, box, _ in sorted(cands, key=lambda c: -c[6]):   # 遠的先畫
             if it["alpha"] >= 0.03:
-                self._blit(base, spr, x, y, it["alpha"])
+                todo.append((spr, x, y, it["alpha"]))
                 if LABEL_LOG is not None:
                     LABEL_LOG.append((idx, it["name"].splitlines()[0], x, y, it["alpha"]))
-        return np.clip(base, 0, 255).astype(np.uint8)
+        return todo
+
+    def draw(self, img, ren, cam, idx, W, H, scale):
+        return self.blit(img, self.layout(ren, cam, idx, W, H, scale))
+
+    def warm(self, scale):
+        """預先畫好每個標籤的各種狀態，交給疊圖行程共用（之後每幀只需傳座標）。"""
+        for it in self.items:
+            for here in (False, True):
+                for passed in (False, True):
+                    self._sprite(it, here, passed, scale)
+        return self.cache
+
+    @staticmethod
+    def blit(img, todo):
+        """把 layout() 排好的標籤疊到畫面上；不碰 VTK，可在背景執行緒執行。"""
+        H, W = img.shape[:2]
+        # 只把標籤涵蓋的範圍轉成浮點數疊圖，不必每幀處理整張畫面
+        x0 = max(0, min((int(math.floor(x)) for _, x, _, _ in todo), default=0))
+        y0 = max(0, min((int(math.floor(y)) for _, _, y, _ in todo), default=0))
+        x1 = min(W, max((int(math.floor(x)) + spr.shape[1] + 1 for spr, x, _, _ in todo), default=0))
+        y1 = min(H, max((int(math.floor(y)) + spr.shape[0] + 1 for spr, _, y, _ in todo), default=0))
+        if x1 <= x0 or y1 <= y0:
+            return img
+        base = img[y0:y1, x0:x1].astype(np.float32)
+        for spr, x, y, alpha in todo:
+            Landmarks._blit(base, spr, x - x0, y - y0, alpha)
+        out = img.copy()
+        out[y0:y1, x0:x1] = np.clip(base, 0, 255).astype(np.uint8)
+        return out
 
 
 # ── 登山小人 ──────────────────────────────────────────────
@@ -807,28 +838,33 @@ def _nice_step(span):
     return 5000
 
 
-def draw_hud(frame, data, idx, width, height, title, credit, prof):
-    im = Image.fromarray(frame).convert("RGBA")
-    ov = Image.new("RGBA", im.size, (0, 0, 0, 0))
+_HUD_CACHE = {}
+
+
+def _hud_static(data, width, height, title, credit):
+    """不隨幀改變的 HUD（面板、標籤、格線、刻度、完整剖面、來源標示）只畫一次。"""
+    ov = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     dr = ImageDraw.Draw(ov)
     sc = min(width, height) / 720
     pad = int(min(width, height) * 0.035)
     land = width > height
     big, mid, sm = g.PIL_FONT_BIG, g.PIL_FONT, g.PIL_FONT_SM
+    boxes = []                                             # 有畫東西的區域：每幀只合成這些範圍
 
     # 標題
     tw = dr.textlength(title, font=big)
     t_bottom = pad + big.size * 1.9
     dr.rounded_rectangle([pad, pad, pad + tw + pad, t_bottom], radius=int(12 * sc), fill=PANEL_RGBA)
     dr.text((pad * 1.5, pad + big.size * 0.35), title, font=big, fill=(255, 255, 255, 255))
+    boxes.append((pad, pad, pad + tw + pad, t_bottom))
 
     lh = sm.size * 1.3
     gap = int(8 * sc)
     cell_h = big.size + sm.size * 3.4
     cells = []                                             # 4 格儀表板的位置 (x0, y0, 寬)
     if land:
-        # 橫式：儀表板（2×2）＋高度剖面縮成左下角一塊（寬約 1/3，與 2D 橫式的左欄相近），畫面其餘留給 3D
-        bw = int(width * 0.34)
+        # 橫式：儀表板（2×2）＋高度剖面縮成左下角一塊（寬約 22%，不擠壓主畫面），畫面其餘留給 3D
+        bw = int(width * 0.22)
         left, right = pad, pad + bw
         py1 = height - pad
         py0 = py1 - int(height * 0.21)
@@ -845,35 +881,22 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
         py1 = height - pad * 0.7 - lh * len(credit)
         py0 = py1 - int(height * 0.20)
 
-    # ── 儀表板：4 格，左側色條＋標籤＋彩色數字（2D 模板） ──
-    i = int(idx)
-    e = data["eles"]
-    items = [(f"{data['dists'][i]:.2f}", f"/ {data['total_dist']:.1f} km", None),
-             (f"{e[i]:.0f}", "m", f"▲{data['ele_max']:.0f}  ▼{data['ele_min']:.0f} m"),
-             (f"{prof['gain'][i]:.0f}", f"/ {prof['gain'][-1]:.0f} m", None),
-             (f"{prof['loss'][i]:.0f}", f"/ {prof['loss'][-1]:.0f} m", None)]
-    for ((val, unit, sub), lab, col, (x0, y0, cw_)) in zip(items, DASH_LABELS, DASH_COLORS, cells):
+    # ── 儀表板：4 格，左側色條＋標籤（數字每幀另外畫） ──
+    for lab, col, (x0, y0, cw_) in zip(DASH_LABELS, DASH_COLORS, cells):
         dr.rounded_rectangle([x0, y0, x0 + cw_, y0 + cell_h], radius=int(8 * sc), fill=PANEL_RGBA)
         dr.rectangle([x0, y0 + 4 * sc, x0 + max(3, 5 * sc), y0 + cell_h - 4 * sc], fill=col + (255,))
-        tx = x0 + 12 * sc
-        dr.text((tx, y0 + 6 * sc), lab, font=sm, fill=LABEL_COL + (255,))
-        vy = y0 + 6 * sc + sm.size * 1.25
-        fb = big
-        while dr.textlength(val, font=fb) + dr.textlength(unit, font=sm) + 18 * sc > cw_ and fb.size > 10:
-            fb = fb.font_variant(size=fb.size - 1)
-        dr.text((tx, vy), val, font=fb, fill=col + (255,))
-        vw = dr.textlength(val, font=fb)
-        dr.text((tx + vw + 4 * sc, vy + fb.size - sm.size), unit, font=sm, fill=UNIT_COL + (255,))
-        if sub:
-            dr.text((tx, vy + fb.size * 1.12), sub, font=sm, fill=(140, 170, 210, 255))
+        dr.text((x0 + 12 * sc, y0 + 6 * sc), lab, font=sm, fill=LABEL_COL + (255,))
+        boxes.append((x0, y0, x0 + cw_, y0 + cell_h))
 
     # ── 高度剖面（2D 模板：標題、座標軸、虛線格線、已走區段填色、目前位置） ──
     dr.rounded_rectangle([pad, py0, right, py1], radius=int(10 * sc), fill=PANEL_RGBA)
     dr.text(((pad + right) / 2, py0 + 4 * sc), "高度剖面", font=mid, fill=TEXT_COL + (255,), anchor="ma")
+    boxes.append((pad, py0, right, py1))
     ax0 = pad + dr.textlength("0000", font=sm) + 18 * sc                 # 繪圖區
     ax1 = right - 12 * sc
     ay0 = py0 + mid.size * 1.5
     ay1 = py1 - sm.size * 1.9
+    e = data["eles"]
     emin, emax = data["ele_min"], data["ele_max"]
     ypad = (emax - emin) * 0.12 + 20
     lo, hi = emin - ypad, emax + ypad
@@ -900,18 +923,6 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     pts = [(X(data["dists"][j]), Y(e[j])) for j in range(0, n, stepi)] + [(X(data["dists"][-1]), Y(e[-1]))]
     dr.polygon(pts + [(pts[-1][0], ay1), (pts[0][0], ay1)], fill=PROFILE_BASE + (90,))
     dr.line(pts, fill=PROFILE_BASE + (255,), width=max(1, int(1.5 * sc)))
-    done = [(X(data["dists"][j]), Y(e[j])) for j in range(0, i + 1, stepi)] + [(X(data["dists"][i]), Y(e[i]))]
-    if len(done) > 1:
-        dr.polygon(done + [(done[-1][0], ay1), (done[0][0], ay1)], fill=DONE_COL + (140,))
-        dr.line(done, fill=DONE_COL + (255,), width=max(2, int(3 * sc)))
-    cx, cy = X(data["dists"][i]), Y(e[i])
-    dr.line([(cx, ay0), (cx, ay1)], fill=ACCENT_COL + (255,), width=max(1, int(2 * sc)))
-    r1, r2 = 7 * sc, 4 * sc
-    dr.ellipse([cx - r1, cy - r1, cx + r1, cy + r1], fill=(255, 255, 255, 255))
-    dr.ellipse([cx - r2, cy - r2, cx + r2, cy + r2], fill=ACCENT_COL + (255,))
-    lab = f"{e[i]:.0f} m"
-    lx = cx + 10 * sc if cx + 10 * sc + dr.textlength(lab, font=sm) < ax1 else cx - 10 * sc - dr.textlength(lab, font=sm)
-    dr.text((lx, cy - sm.size * 1.1), lab, font=sm, fill=TEXT_COL + (255,))
 
     # 來源標示
     cmax = (width - 2 * pad) if not land else (width - right - 2 * pad)      # 橫式：放在右下角，不壓到左下的儀表板
@@ -930,7 +941,157 @@ def draw_hud(frame, data, idx, width, height, title, credit, prof):
     for k, (line, fnt, _) in enumerate(lines):
         dr.text((cx1, cy_base - lh * (len(credit) - 1 - k) - lh * 0.25), line, font=fnt,
                 fill=(255, 255, 255, 235), anchor="rs")
-    return np.asarray(Image.alpha_composite(im, ov).convert("RGB"))
+    boxes.append((bx0, by0, cx1 + 6 * sc, by1))
+
+    m = int(4 * sc) + 2                                    # 文字字形可能略超出面板，合成範圍多留一點
+    boxes = [(max(0, int(x0) - m), max(0, int(y0) - m), min(width, int(math.ceil(x1)) + m),
+              min(height, int(math.ceil(y1)) + m)) for x0, y0, x1, y1 in boxes]
+    return dict(ov=ov, boxes=boxes, cells=cells, sc=sc, X=X, Y=Y, ay0=ay0, ay1=ay1, ax1=ax1, stepi=stepi)
+
+
+def draw_hud(frame, data, idx, width, height, title, credit, prof):
+    key = (id(data), width, height, title, tuple(credit))
+    st = _HUD_CACHE.get(key)
+    if st is None:
+        _HUD_CACHE.clear()
+        st = _HUD_CACHE[key] = _hud_static(data, width, height, title, credit)
+    ov = _hud_overlay(st, data, idx, prof)
+
+    # 只在 HUD 面板範圍內合成；其餘位置的覆蓋層全透明，畫面原樣保留
+    out = np.array(frame, copy=True)
+    for x0, y0, x1, y1 in st["boxes"]:
+        im = Image.fromarray(np.ascontiguousarray(frame[y0:y1, x0:x1])).convert("RGBA")   # 範圍重疊也不會疊兩次
+        out[y0:y1, x0:x1] = np.asarray(Image.alpha_composite(im, ov.crop((x0, y0, x1, y1))).convert("RGB"))
+    return out
+
+
+def _hud_overlay(st, data, idx, prof):
+    """在靜態 HUD 的複本上畫這一幀會變的部分（數字、已走區段、目前位置）。"""
+    ov = st["ov"].copy()
+    dr = ImageDraw.Draw(ov)
+    sc, X, Y, ay0, ay1, ax1 = st["sc"], st["X"], st["Y"], st["ay0"], st["ay1"], st["ax1"]
+    big, sm = g.PIL_FONT_BIG, g.PIL_FONT_SM
+
+    # ── 儀表板數字（2D 模板：彩色數字＋單位） ──
+    i = int(idx)
+    e = data["eles"]
+    items = [(f"{data['dists'][i]:.2f}", f"/ {data['total_dist']:.1f} km", None),
+             (f"{e[i]:.0f}", "m", f"▲{data['ele_max']:.0f}  ▼{data['ele_min']:.0f} m"),
+             (f"{prof['gain'][i]:.0f}", f"/ {prof['gain'][-1]:.0f} m", None),
+             (f"{prof['loss'][i]:.0f}", f"/ {prof['loss'][-1]:.0f} m", None)]
+    for ((val, unit, sub), col, (x0, y0, cw_)) in zip(items, DASH_COLORS, st["cells"]):
+        tx = x0 + 12 * sc
+        vy = y0 + 6 * sc + sm.size * 1.25
+        fb = big
+        while dr.textlength(val, font=fb) + dr.textlength(unit, font=sm) + 18 * sc > cw_ and fb.size > 10:
+            fb = fb.font_variant(size=fb.size - 1)
+        dr.text((tx, vy), val, font=fb, fill=col + (255,))
+        vw = dr.textlength(val, font=fb)
+        dr.text((tx + vw + 4 * sc, vy + fb.size - sm.size), unit, font=sm, fill=UNIT_COL + (255,))
+        if sub:
+            dr.text((tx, vy + fb.size * 1.12), sub, font=sm, fill=(140, 170, 210, 255))
+
+    # ── 高度剖面：已走區段與目前位置 ──
+    stepi = st["stepi"]
+    done = [(X(data["dists"][j]), Y(e[j])) for j in range(0, i + 1, stepi)] + [(X(data["dists"][i]), Y(e[i]))]
+    if len(done) > 1:
+        dr.polygon(done + [(done[-1][0], ay1), (done[0][0], ay1)], fill=DONE_COL + (140,))
+        dr.line(done, fill=DONE_COL + (255,), width=max(2, int(3 * sc)))
+    cx, cy = X(data["dists"][i]), Y(e[i])
+    dr.line([(cx, ay0), (cx, ay1)], fill=ACCENT_COL + (255,), width=max(1, int(2 * sc)))
+    r1, r2 = 7 * sc, 4 * sc
+    dr.ellipse([cx - r1, cy - r1, cx + r1, cy + r1], fill=(255, 255, 255, 255))
+    dr.ellipse([cx - r2, cy - r2, cx + r2, cy + r2], fill=ACCENT_COL + (255,))
+    lab = f"{e[i]:.0f} m"
+    lx = cx + 10 * sc if cx + 10 * sc + dr.textlength(lab, font=sm) < ax1 else cx - 10 * sc - dr.textlength(lab, font=sm)
+    dr.text((lx, cy - sm.size * 1.1), lab, font=sm, fill=TEXT_COL + (255,))
+    return ov
+
+
+_OVL = {}
+
+
+def _overlay_init(ctx):
+    """疊圖行程啟動時呼叫一次：字型、軌跡資料、標籤圖都只傳這一次。"""
+    global cv2
+    import cv2
+    from multiprocessing import shared_memory
+    _OVL.clear()
+    _OVL.update(ctx)
+    W, H = ctx["W"], ctx["H"]
+    g.scale_fonts_for(W, H, W > H)
+    haze = np.empty((H, W, 3), np.uint8)
+    haze[:] = HAZE_RGB.astype(np.uint8)
+    _OVL["haze"] = haze
+    shm = shared_memory.SharedMemory(name=ctx["shm"])
+    _OVL["shm_handle"] = shm
+    _OVL["imgs"], _OVL["zs"] = frame_slots(shm, ctx["slots"], W, H)
+
+
+def _overlay_worker(conn, ctx):
+    """疊圖行程：啟動後回報 ready，接著每收到一幀就處理並回報（None = 成功，字串 = 錯誤訊息）。"""
+    import traceback
+    import hardware
+    hardware.disable_power_throttling()
+    _overlay_init(ctx)
+    cv2.setNumThreads(1)                             # 已經是多個行程平行處理；每個行程再開滿執行緒只會互搶 CPU
+    conn.send("ready")
+    while True:
+        job = conn.recv()
+        if job is None:
+            break
+        try:
+            _overlay_frame(*job)
+            conn.send(None)
+        except Exception:
+            conn.send(traceback.format_exc())
+    _OVL.clear()
+
+
+def _stop_overlay_workers(pool):
+    for p, conn in pool:
+        try:
+            conn.send(None)
+        except Exception:
+            pass
+    for p, conn in pool:
+        p.join(5)
+        if p.is_alive():
+            p.terminate()
+        conn.close()
+
+
+def frame_slots(shm, slots, W, H):
+    """共享記憶體裡的幀緩衝區：每格放一張畫面與半解析度深度，主行程與疊圖行程直接讀寫，不必複製整張圖。"""
+    zh, zw = (H + 1) // 2, (W + 1) // 2
+    n_img = slots * H * W * 3
+    imgs = np.ndarray((slots, H, W, 3), np.uint8, buffer=shm.buf)
+    zs = np.ndarray((slots, zh, zw), np.float32, buffer=shm.buf, offset=n_img)
+    return imgs, zs
+
+
+def frame_slots_size(slots, W, H):
+    return slots * (H * W * 3 + ((H + 1) // 2) * ((W + 1) // 2) * 4)
+
+
+def _overlay_frame(slot, has_z, near, far, labels, i):
+    """霧化、地標、儀表板：純 numpy / OpenCV / Pillow，在獨立的行程平行處理，顯示卡同時渲染下一幀。
+    讀寫共享記憶體裡的第 slot 格。"""
+    c = _OVL
+    W, H = c["W"], c["H"]
+    img = c["imgs"][slot]
+    z = c["zs"][slot] if has_z else None
+    if z is not None:
+        ndc = 2.0 * z - 1.0
+        d = 2.0 * near * far / (far + near - ndc * (far - near))
+        start, full = c["outer_r"] * 0.35, c["outer_r"] * 1.6
+        fog = np.clip((d - start) / (full - start), 0, 1) ** 1.3 * 0.75
+        fog[z >= 0.99999] = 0                                     # 天空
+        fog = cv2.resize(fog.astype(np.float32), (W, H), interpolation=cv2.INTER_LINEAR)
+        img = cv2.blendLinear(img, c["haze"], 1.0 - fog, fog)
+    if labels:
+        img = Landmarks.blit(img, [(c["sprites"][k][0], x, y, a) for k, x, y, a in labels])
+    c["imgs"][slot] = draw_hud(img, c["data"], i, W, H, c["data"]["track_name"], c["credit"], c["prof"])
 
 
 def slope_colors(data):
@@ -952,11 +1113,15 @@ HAZE_RGB = np.array([200, 216, 232], np.float32)
 
 def render(args, progress=None):
     import pyvista as pv
+    import hardware
+    hardware.disable_power_throttling()                     # 視窗不在前景時也全速製作，不被 Windows 降到省電核心
     global vtkFloatArray, vtk_to_numpy
     from vtkmodules.vtkCommonCore import vtkFloatArray
     from vtkmodules.util.numpy_support import vtk_to_numpy
     global cv2
     import cv2
+    import multiprocessing
+    from multiprocessing import shared_memory
     pv.global_theme.multi_samples = 4
     data = g.parse_gpx(args.gpx)
     if args.title:
@@ -1104,6 +1269,8 @@ def render(args, progress=None):
         cmd += ["-pix_fmt", "yuv420p", out]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 creationflags=_NOWIN)
+        if os.name == "nt":
+            hardware.disable_power_throttling(proc._handle)          # ffmpeg 也一樣
     else:
         print("   ⚠️  找不到 ffmpeg，改用內建編碼（相容性較低）")
         enc = "mp4v"
@@ -1111,68 +1278,129 @@ def render(args, progress=None):
 
     print(f"🎬 {W}×{H}，{frames} 幀（{frames / args.fps:.0f} 秒），編碼 {enc}")
     t0 = time.time()
-    haze_img = None
-    for f in range(frames):
-        i = int(round(idx_f[f]))
-        r = route.point_data["rgb"]
-        r[:i + 1, :3] = colors[:i + 1]
-        r[:i + 1, 3] = 255
-        r[i + 1:] = (230, 230, 255, 110)
-        route.point_data["rgb"] = r
-        if hiker:
-            fi = idx_f[f]
-            pz = float(np.interp(fi, np.arange(n), scene.tz))
-            pos = (float(np.interp(fi, np.arange(n), scene.tx)), float(np.interp(fi, np.arange(n), scene.ty)), pz)
-            hiker.update(pos, float(yaw[f]), f not in photo_at and 0 < fi < n - 1, args.fps)
-        else:
-            mp = (float(scene.tx[i]), float(scene.ty[i]), float(scene.tz[i] + rad * 0.8))
-            mact.SetPosition(*mp)
-            hact.SetPosition(*mp)
-        # 照片卡片：橫式把小人移左；直式保留低角度的下半部構圖，避免再往下壓進高度圖。
-        hw = hold_w[f]
-        o = float(ow[f])                    # 開場/結尾總覽：把整段路線移到儀表板以外的空白區域
-        if W > H:
-            pl.camera.SetWindowCenter(0.32 * hw - 0.44 * o, args.shift - 0.06 * o)
-        else:
-            pl.camera.SetWindowCenter(0.0, args.shift - 0.3 * o)
-        pl.camera.position = tuple(cam[f])
-        pl.camera.focal_point = tuple(focal[f])
-        pl.camera.up = (0, 0, 1)
-        pl.camera.clipping_range = (5.0, (outer_r or ext) * 6 + 20000)
-        pl.render()
-        img = pl.screenshot(return_img=True)
-        if outer_r and not args.no_haze:                       # 大氣霧化：越遠越淡，地平線自然融入天空
-            zb = vtkFloatArray()
-            pl.ren_win.GetZbufferData(0, 0, W - 1, H - 1, zb)           # 直接讀深度緩衝區（不必再渲染一次）
-            z = vtk_to_numpy(zb).reshape(H, W)[::-2, ::2].astype(np.float32)   # 半解析度計算就夠（霧是平滑的）
-            near, far = pl.camera.clipping_range
-            ndc = 2.0 * z - 1.0
-            d = 2.0 * near * far / (far + near - ndc * (far - near))
-            start, full = outer_r * 0.35, outer_r * 1.6
-            fog = np.clip((d - start) / (full - start), 0, 1) ** 1.3 * 0.75
-            fog[z >= 0.99999] = 0                                     # 天空
-            fog = cv2.resize(fog.astype(np.float32), (W, H), interpolation=cv2.INTER_LINEAR)
-            if haze_img is None:
-                haze_img = np.empty_like(img)
-                haze_img[:] = HAZE_RGB.astype(np.uint8)
-            img = cv2.blendLinear(img, haze_img, 1.0 - fog, fog)
-        if lm:
-            img = lm.draw(img, pl.renderer, cam[f], i, W, H, min(W, H) / 720)
-        img = draw_hud(img, data, i, W, H, data["track_name"], credit, prof)
-        if f in photo_at:
-            card, u, k, nk = photo_at[f]
-            fade = max(1, int(args.fps * 0.3))
-            img = card.draw(img, u, min(1.0, (k + 1) / fade, (nk - k) / fade))
+    fade = max(1, int(args.fps * 0.3))
+    sprites = lm.warm(min(W, H) / 720) if lm else {}
+    sprite_key = {id(v[0]): k for k, v in sprites.items()}
+    ctx = dict(W=W, H=H, data=data, prof=prof, credit=credit, outer_r=outer_r, sprites=sprites)
+
+    def write(img):
         if proc:
             proc.stdin.write(img.tobytes())
         else:
             cv_out.write(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        if f % max(1, frames // 20) == 0:
-            el = time.time() - t0
-            if progress:
-                progress(f / frames)
+
+    # 疊圖用多個行程（不是執行緒）：Python 的 GIL 會讓多執行緒互相等待，行程才真的同時用到多個 CPU 核心
+    workers = max(1, min(8, (os.cpu_count() or 2) // 2))
+    slots = 2 * workers + 2
+    shm = shared_memory.SharedMemory(create=True, size=frame_slots_size(slots, W, H))
+    imgs, zs = frame_slots(shm, slots, W, H)
+    free = collections.deque(range(slots))
+    ctx.update(shm=shm.name, slots=slots)
+    pool = []                                           # 每個疊圖行程一條管線；第 f 幀交給第 f % workers 個，結果自然依序回來
+    if workers > 1:
+        try:
+            mpc = multiprocessing.get_context("spawn")
+            for _ in range(workers):
+                a, b = mpc.Pipe()
+                p = mpc.Process(target=_overlay_worker, args=(b, ctx), daemon=True)
+                p.start()
+                pool.append((p, a))
+            for p, a in pool:                              # 確認行程都能正常啟動
+                if not a.poll(120) or a.recv() != "ready":
+                    raise RuntimeError("疊圖行程沒有回應")
+        except Exception as ex:
+            print(f"   ⚠️  無法啟動平行疊圖（{ex}），改用單一行程")
+            _stop_overlay_workers(pool)
+            pool = []
+    if not pool:
+        _overlay_init(ctx)
+    print(f"   疊圖：{len(pool) or 1} 個 CPU 行程平行處理")
+    pending = collections.deque()                       # 依幀序輸出；最多同時處理 2×workers 幀
+
+    def flush_one():
+        k, slot, card = pending.popleft()
+        if pool:
+            err = pool[k][1].recv()
+            if err:
+                raise RuntimeError(f"疊圖行程發生錯誤：\n{err}")
+        img = imgs[slot]
+        if card:
+            c, u, a = card
+            img = c.draw(img, u, a)
+        write(img)
+        free.append(slot)
+
+    try:
+        for f in range(frames):
+            i = int(round(idx_f[f]))
+            r = route.point_data["rgb"]
+            r[:i + 1, :3] = colors[:i + 1]
+            r[:i + 1, 3] = 255
+            r[i + 1:] = (230, 230, 255, 110)
+            route.point_data["rgb"] = r
+            if hiker:
+                fi = idx_f[f]
+                pz = float(np.interp(fi, np.arange(n), scene.tz))
+                pos = (float(np.interp(fi, np.arange(n), scene.tx)), float(np.interp(fi, np.arange(n), scene.ty)), pz)
+                hiker.update(pos, float(yaw[f]), f not in photo_at and 0 < fi < n - 1, args.fps)
             else:
-                print(f"   {f / frames * 100:5.1f}%  {f / max(el, 1e-3):.1f} 幀/s", end="\r")
+                mp = (float(scene.tx[i]), float(scene.ty[i]), float(scene.tz[i] + rad * 0.8))
+                mact.SetPosition(*mp)
+                hact.SetPosition(*mp)
+            # 照片卡片：橫式把小人移左；直式保留低角度的下半部構圖，避免再往下壓進高度圖。
+            hw = hold_w[f]
+            o = float(ow[f])                    # 開場/結尾總覽：把整段路線移到儀表板以外的空白區域
+            if W > H:
+                pl.camera.SetWindowCenter(0.32 * hw - 0.44 * o, args.shift - 0.06 * o)
+            else:
+                pl.camera.SetWindowCenter(0.0, args.shift - 0.3 * o)
+            pl.camera.position = tuple(cam[f])
+            pl.camera.focal_point = tuple(focal[f])
+            pl.camera.up = (0, 0, 1)
+            pl.camera.clipping_range = (5.0, (outer_r or ext) * 6 + 20000)
+            pl.render()
+            slot = free.popleft()
+            imgs[slot] = pl.screenshot(return_img=True)
+            has_z, near, far = False, None, None
+            if outer_r and not args.no_haze:                   # 大氣霧化：越遠越淡，地平線自然融入天空
+                zb = vtkFloatArray()
+                pl.ren_win.GetZbufferData(0, 0, W - 1, H - 1, zb)       # 直接讀深度緩衝區（不必再渲染一次）
+                zs[slot] = vtk_to_numpy(zb).reshape(H, W)[::-2, ::2]    # 半解析度計算就夠（霧是平滑的）
+                has_z, (near, far) = True, pl.camera.clipping_range
+            labels = None
+            if lm:
+                labels = [(sprite_key[id(spr)], x, y, a)
+                          for spr, x, y, a in lm.layout(pl.renderer, cam[f], i, W, H, min(W, H) / 720)]
+            card = None
+            if f in photo_at:
+                c, u, k, nk = photo_at[f]
+                card = (c, u, min(1.0, (k + 1) / fade, (nk - k) / fade))
+            job = (slot, has_z, near, far, labels, i)
+            k = f % len(pool) if pool else 0
+            if pool:
+                pool[k][1].send(job)
+            else:
+                _overlay_frame(*job)
+            pending.append((k, slot, card))
+            while len(pending) > (2 * len(pool) if pool else 0):
+                flush_one()
+            if f % max(1, frames // 20) == 0:
+                el = time.time() - t0
+                if progress:
+                    progress(f / frames)
+                else:
+                    print(f"   {f / frames * 100:5.1f}%  {f / max(el, 1e-3):.1f} 幀/s", end="\r")
+        while pending:
+            flush_one()
+    finally:
+        _stop_overlay_workers(pool)
+        handle = _OVL.pop("shm_handle", None)              # 單一行程模式時，主行程自己也掛上了一份
+        _OVL.clear()
+        imgs = zs = None                                   # 先放掉指向共享記憶體的陣列，才能關閉
+        if handle:
+            handle.close()
+        shm.close()
+        shm.unlink()
     if proc:
         proc.stdin.close()
         proc.wait()
@@ -1225,4 +1453,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

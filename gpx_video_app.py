@@ -25,7 +25,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.2.0"
 RELEASE_DATE = "2026/10/25"
 
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"
@@ -159,10 +159,15 @@ class App:
         tk.Label(f, text=f"開發：Skypray Huang　　首版日期：2026/6/21　　最新日期：{RELEASE_DATE}",
                  bg=BG, fg=DIM,
                  font=("Microsoft JhengHei UI", 10)).pack(pady=(0,4))
-        about = tk.Label(f, text="版權與授權資訊", bg=BG, fg="#7fb3ff", cursor="hand2",
+        links = tk.Frame(f, bg=BG); links.pack(pady=(0,14))
+        about = tk.Label(links, text="版權與授權資訊", bg=BG, fg="#7fb3ff", cursor="hand2",
                          font=("Microsoft JhengHei UI", 10, "underline"))
-        about.pack(pady=(0,14))
+        about.pack(side="left", padx=10)
         about.bind("<Button-1>", lambda e: self._about())
+        hw = tk.Label(links, text="檢測硬體與顯示卡加速", bg=BG, fg="#7fb3ff", cursor="hand2",
+                      font=("Microsoft JhengHei UI", 10, "underline"))
+        hw.pack(side="left", padx=10)
+        hw.bind("<Button-1>", lambda e: self._hardware())
 
         # ① GPX（多檔，每個可自訂標題）
         self._sec(f, "① GPX 軌跡檔案（可一次選多個，標題可個別修改）")
@@ -473,6 +478,42 @@ class App:
         txt.pack(fill="both", expand=True, padx=12, pady=12)
         txt.insert("end", LICENSE_TEXT)
         txt.config(state="disabled")
+
+    def _hardware(self):
+        """檢測 CPU / 顯示卡型號，以及 3D 渲染、影片編碼是否用到顯示卡。"""
+        win = tk.Toplevel(self.root); win.title("硬體與顯示卡加速")
+        win.configure(bg=BG); win.geometry("760x380")
+        txt = scrolledtext.ScrolledText(win, bg=DARK2, fg=TEXT, wrap="word", relief="flat",
+                                        font=("Microsoft JhengHei UI", 10), padx=12, pady=10)
+        txt.pack(fill="both", expand=True, padx=12, pady=12)
+        txt.insert("end", "檢測中…\n")
+        txt.config(state="disabled")
+        lines = queue.Queue()
+
+        def poll():                                    # 背景執行緒只放進佇列，由主執行緒更新視窗
+            if not txt.winfo_exists():
+                return
+            try:
+                while True:
+                    line = lines.get_nowait()
+                    txt.config(state="normal")
+                    if txt.get("1.0", "2.0").startswith("檢測中"):
+                        txt.delete("1.0", "2.0")
+                    txt.insert("end", line + "\n")
+                    txt.config(state="disabled")
+            except queue.Empty:
+                pass
+            win.after(100, poll)
+
+        def work():
+            try:
+                import hardware
+                hardware.detect(log=lines.put)
+            except Exception as ex:
+                lines.put(f"檢測失敗：{ex}")
+
+        threading.Thread(target=work, daemon=True).start()
+        poll()
 
     def _sec(self, parent, text):
         row = tk.Frame(parent, bg=BG); row.pack(fill="x", padx=20, pady=(12,2))
@@ -1018,4 +1059,8 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()     # 打包成 exe 時，3D 疊圖的子行程才不會再開一次主程式
+    import hardware
+    hardware.disable_power_throttling()  # 製作影片時切到別的視窗，也不會被 Windows 降速
     main()

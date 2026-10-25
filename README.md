@@ -1,4 +1,4 @@
-# HikeReel v2.1.3
+# HikeReel v2.2.0
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
@@ -13,10 +13,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.1.3_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.2.0_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.1.3/
+HikeReel_v2.2.0/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -24,7 +24,7 @@ HikeReel_v2.1.3/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.1.3`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.2.0`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 > - 防毒軟體（例如 Norton）可能把它誤判為「未知／高風險檔案」，說明與回報方式見下方「🛡️ 防毒軟體誤判說明與回報」。
@@ -102,8 +102,10 @@ HikeReel_v2.1.3/
 - 跟隨高度比預設為 `0.28`（v2.1.2 為 `0.10`、更早為 `0.42`）；低解析 Sentinel-2 仍保持較遠距離。命令列可用 `--look-up` 調整視線角度（正值仰視、負值俯視），`--orbit 0` 關閉左右繞行與高度起伏。
 - 鏡頭跟著平滑過的路線、轉向速度有上限（每秒 20°），讓急轉彎與之字形路段的轉向較平順。
 - 開場從整條路線的總覽降到小人身後；結尾在小人抵達終點、停下後，鏡頭才慢慢拉遠約 4 秒（`--outro-seconds`），呈現整段軌跡與最終數據。
-- 儀表板（距離 / 海拔 / 上坡 / 下坡）與高度剖面沿用 2D 模式的配色與版型，底色為半透明。版面也依 2D 的比例配置：**橫式**縮成左下角一塊（約 1/3 寬）；**直式**數字列在最上方、高度剖面在最底部，合計約 28% 高度，中間留給 3D 畫面。
+- 儀表板（距離 / 海拔 / 上坡 / 下坡）與高度剖面沿用 2D 模式的配色與版型，底色為半透明。版面也依 2D 的比例配置：**橫式**縮成左下角一塊（約 22% 寬，不擠壓主畫面）；**直式**數字列在最上方、高度剖面在最底部，合計約 28% 高度，中間留給 3D 畫面。
 - 需要 OpenGL（一般顯示卡 / 內顯即可），使用 PyVista / VTK 離線渲染。
+- **速度與顯示卡**：3D 畫面由顯示卡渲染，NVIDIA 顯示卡會用 NVENC 硬體編碼（RTX 50 系列也支援）；儀表板、地標、霧化等疊圖分散到多個 CPU 行程，與顯示卡渲染同時進行。製作時切到其他視窗也會全速執行（已關閉 Windows 背景降速）。每幀的 3D 渲染只要幾毫秒，所以工作管理員裡的顯示卡使用率偏低是正常的，約 1 GB 以內的顯示記憶體就夠用。
+- 主畫面上方的「**檢測硬體與顯示卡加速**」可查看 CPU、顯示卡型號，以及 3D 渲染與影片編碼是否用到顯示卡。筆電若顯示 3D 不在獨立顯示卡上，請到 Windows「設定 → 系統 → 顯示器 → 圖形」把 HikeReel.exe 設為「高效能」。
 - 公司或學校網路若有 SSL 檢查，程式會自動改用 Windows 系統憑證（truststore）。
 - 不使用 Google Earth / Google 地圖的圖資（授權不允許）。
 
@@ -300,7 +302,7 @@ HikeReel 是用 PyInstaller 打包的 Windows 程式，目前**沒有程式碼�
 - HikeReel 是開源專案，原始碼公開在本儲存庫；Release 的 zip 是由 [GitHub Actions](https://github.com/skypray73/HikeReel/actions) 依原始碼自動建置，Release 說明最後附有 zip 的 **SHA-256**，可核對下載的檔案沒有被更換：
 
   ```
-  Get-FileHash HikeReel_v2.1.3_Windows.zip -Algorithm SHA256
+  Get-FileHash HikeReel_v2.2.0_Windows.zip -Algorithm SHA256
   ```
 
 - 不放心也可以不用 exe，改從原始碼執行（見上方「從原始碼執行」）。

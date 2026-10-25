@@ -1154,7 +1154,8 @@ def detect_encoder():
     try:
         r = subprocess.run(
             [ffmpeg, "-hide_banner", "-f", "lavfi", "-i",
-             "nullsrc=s=64x64:d=0.1", "-c:v", "h264_nvenc", "-f", "null", "-"],
+             # RTX 50 系列（Blackwell）的 NVENC 不接受太小的畫面，用 64x64 測試會誤判成沒有 GPU 編碼
+             "nullsrc=s=256x256:d=0.1", "-c:v", "h264_nvenc", "-f", "null", "-"],
             capture_output=True, timeout=10)
         if r.returncode == 0:
             return "h264_nvenc", "NVIDIA GPU"
