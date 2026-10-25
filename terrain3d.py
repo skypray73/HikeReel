@@ -433,7 +433,7 @@ def gaussian(a, sigma):
 
 def hiker_size(back):
     """小人隨跟隨距離縮放；短路線也不會佔滿畫面。"""
-    return max(4.0, back * 0.04)
+    return max(10.0, back * 0.04)
 
 
 def camera_path(scene, s, fps, pitch=0.10, dist=0.6, n_outro=None, aspect=16 / 9,
