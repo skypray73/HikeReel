@@ -4,6 +4,7 @@ numpy
 matplotlib
 opencv-python
 pillow
+pillow-heif    # 手機 HEIC / HEIF 照片與 EXIF GPS
 openpyxl
 contextily
 pyproj

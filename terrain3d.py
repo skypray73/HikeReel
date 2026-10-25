@@ -38,6 +38,7 @@ from PIL import Image, ImageDraw
 
 import gpx_to_video as g          # 沿用既有的 GPX 解析、坡度顏色、字型、ffmpeg 偵測
 from landmark_photos import PhotoCard, build_schedule, default_folder, find_photo, landmark_photo_table
+from photo_gps import match_photos, nearest_route_position
 
 UA = g.HIKEREEL_UA if getattr(g, "HAS_CTX", False) else "HikeReel/1.1 (+https://github.com/skypray73/HikeReel)"
 _NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)       # 打包成視窗程式時，呼叫 ffmpeg 不要跳出黑色主控台
@@ -548,7 +549,7 @@ class Landmarks:
             z = float(scene.terrain_at(np.array([x]), np.array([y]))[0])
             near = int(np.argmin((scene.tx - x) ** 2 + (scene.ty - y) ** 2))   # 軌跡上最接近的點
             self.items.append(dict(name=str(name).replace("\\n", "\n"), x=x, y=y, z=z + lift,
-                                   near=near, alpha=0.0))
+                                   near=near, lat=lat, lon=lon, alpha=0.0))
         self.scene = scene
         self.cache = {}
 
@@ -919,10 +920,11 @@ def render(args, progress=None):
 
     # 地標照片：地標庫的「照片」欄，或照片資料夾裡與地標同名的圖片
     holds = []
+    base = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+    folder = args.photos or (default_folder(lm_path) if lm_path else os.path.join(base, "landmark_photos"))
+    hold_n = max(1, int(round(args.photo_seconds * args.fps)))
     if lm and not args.no_photos:
         table = landmark_photo_table(lm_path)
-        folder = args.photos or default_folder(lm_path)
-        hold_n = max(1, int(round(args.photo_seconds * args.fps)))
         for it in lm.items:
             ph = find_photo(it["name"], table, folder)
             if ph:
@@ -931,9 +933,20 @@ def render(args, progress=None):
                 except Exception as ex:
                     print(f"   ⚠️  照片無法開啟：{ph}（{ex}）")
                     continue
-                holds.append((float(data["dists"][it["near"]] * 1000.0), hold_n, card))
-        if holds:
-            print(f"   🖼️  地標照片：{len(holds)} 張，每張停留 {args.photo_seconds:g} 秒")
+                # Labels retain their nearest vertex; photo timing uses the precise segment position.
+                near, _offset = nearest_route_position(it["lat"], it["lon"], data["lats"], data["lons"])
+                d = float(np.interp(near, np.arange(n), data["dists"]) * 1000.0)
+                holds.append((d, hold_n, card))
+    if not args.no_photos:
+        for photo in match_photos(folder, data["lats"], data["lons"], args.radius):
+            try:
+                card = PhotoCard(photo["path"], photo["name"], W, H, min(W, H) / 720, g.PIL_FONT)
+                d = float(np.interp(photo["near"], np.arange(n), data["dists"]) * 1000.0)
+                holds.append((d, hold_n, card))
+            except Exception as ex:
+                print(f"   ⚠️  照片無法開啟：{photo['name']}（{ex}）")
+    if holds:
+        print(f"   🖼️  照片合計：{len(holds)} 張，每張停留 {args.photo_seconds:g} 秒")
     s_sched, photo_ranges = build_schedule(float(data["dists"][-1] * 1000.0), frames_move, holds)
     # 結尾：小人走到終點、停下約 0.5 秒後，鏡頭才慢慢拉遠（預設 4 秒）讓整段軌跡入鏡
     n_pause = int(round(args.fps * 0.5))
@@ -1119,10 +1132,10 @@ def build_parser():
     ap.add_argument("--line-width", type=float, default=7)
     ap.add_argument("--no-gpu", action="store_true")
     ap.add_argument("--landmarks", default=None, help="地標庫（.xlsx / .csv），預設使用程式旁的 locationGPS.xlsx")
-    ap.add_argument("--radius", type=float, default=0.5, help="地標篩選半徑（公里）")
+    ap.add_argument("--radius", type=float, default=0.5, help="地標與 GPS 照片到軌跡的篩選半徑（公里，預設 0.5＝500 m）")
     ap.add_argument("--no-landmarks", action="store_true", help="不顯示地標")
     ap.add_argument("--photos", default=None,
-                    help="地標照片資料夾（檔名 = 地標名稱，例如 第一山屋.jpg）；預設為地標庫旁的 landmark_photos")
+                    help="地標／GPS 照片資料夾（包含 gps_photos.json）；預設為地標庫旁的 landmark_photos")
     ap.add_argument("--photo-seconds", type=float, default=3.0, help="每張地標照片停留秒數（建議 2.5~3.5）")
     ap.add_argument("--no-photos", action="store_true", help="不顯示地標照片")
     ap.add_argument("--no-outer", action="store_true", help="不加外圍地形")

@@ -243,7 +243,7 @@ GRID_COL      = "#2a2a4a"
 def load_landmarks(path, radius_km, lats, lon_arr):
     """
     從 .xlsx 或 .csv 地標總庫載入所有地標，
-    只保留「距離 GPX 軌跡任一點在 radius_km 以內」的地標。
+    只保留「距離 GPX 軌跡線段在 radius_km 以內」的地標。
 
     檔案格式（第一列為欄位名稱）：
         名稱      | 緯度      | 經度       | 方向   | 備註（可省略）
@@ -256,6 +256,10 @@ def load_landmarks(path, radius_km, lats, lon_arr):
     回傳：符合條件的 WAYPOINTS list
     """
     import os
+    import math
+    from photo_gps import nearest_route_position
+    if not math.isfinite(radius_km) or radius_km < 0:
+        raise ValueError("篩選半徑必須大於或等於 0（公里）")
     ext = os.path.splitext(path)[1].lower()
 
     # 讀取檔案
@@ -305,13 +309,6 @@ def load_landmarks(path, radius_km, lats, lon_arr):
                 return row[k]
         return None
 
-    # 軌跡邊界（加上 radius margin）
-    deg_per_km = 1 / 111.0
-    lat_min = lats.min()  - radius_km * deg_per_km
-    lat_max = lats.max()  + radius_km * deg_per_km
-    lon_min = lon_arr.min() - radius_km * deg_per_km
-    lon_max = lon_arr.max() + radius_km * deg_per_km
-
     selected = []
     skipped  = []
 
@@ -342,21 +339,12 @@ def load_landmarks(path, radius_km, lats, lon_arr):
 
         name = str(name).replace("\n", "\n")
 
-        # 粗篩：邊界框
-        if not (lat_min <= lat <= lat_max and lon_min <= lon <= lon_max):
+        try:
+            _near, offset = nearest_route_position(lat, lon, lats, lon_arr)
+        except ValueError:
             skipped.append(str(name))
             continue
-
-        # 精篩：實際最近距離
-        min_dist = float("inf")
-        for i in range(len(lats)):
-            d = haversine(lats[i], lon_arr[i], lat, lon) / 1000
-            if d < min_dist:
-                min_dist = d
-            if min_dist < radius_km:
-                break  # 夠近了，不用繼續算
-
-        if min_dist <= radius_km:
+        if offset <= radius_km * 1000 + 1e-6:
             selected.append((str(name), lat, lon, str(dire).strip().lower()))
         else:
             skipped.append(str(name))

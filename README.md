@@ -1,10 +1,11 @@
-# HikeReel v2.0.5
+# HikeReel v2.1.0
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
 - **2D 模式**：OpenStreetMap 平面地圖，免金鑰。
 - **3D 模式**：Esri 高解析衛星影像貼在真實地形上，鏡頭跟著登山小人沿路線飛行（需自備免費的 ArcGIS 金鑰）。
 - 兩種模式都支援**地標標籤**與**地標照片**。
+- **照片 GPS 自動配對**：批次匯入照片，讀取 EXIF 定位，在軌跡最近處顯示照片，不必先建立 Excel 地標。
 
 ## ⬇️ 下載執行檔（Windows）
 
@@ -12,10 +13,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.0.5_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.1.0_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.0.5/
+HikeReel_v2.1.0/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -23,7 +24,7 @@ HikeReel_v2.0.5/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.0.5`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.1.0`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 > - 防毒軟體（例如 Norton）可能把它誤判為「未知／高風險檔案」，說明與回報方式見下方「🛡️ 防毒軟體誤判說明與回報」。
@@ -74,7 +75,7 @@ HikeReel_v2.0.5/
 3. 選模式：
    - **2D OpenStreetMap**：影片長度由「加速倍數」決定
    - **3D Esri**：第一次選會提示輸入 ArcGIS 金鑰（見下方）；可設定影片長度（秒）
-4. （選用）按「🖼 管理地標照片…」幫地標挑照片
+4. （選用）按「🖼 管理地標照片…」幫地標挑照片，或按「📍 匯入 GPS 照片…」批次匯入手機照片
 5. 設定解析度，按「▶ 開始批次產生影片」
 
 輸出影片放在 GPX 同一資料夾：2D 為 `路線 (寬x高).mp4`，3D 為 `路線 3D (寬x高).mp4`。
@@ -108,11 +109,23 @@ HikeReel_v2.0.5/
 
 ## 🖼️ 地標照片（2D、3D 都適用）
 
+- **直接匯入照片（v2.1 新增）**：按「📍 匯入 GPS 照片…」→「＋ 匯入照片」，可一次選取多張。程式讀取照片 EXIF 的 GPS 經緯度，自動配對到 GPX 最近的線段，不需要 Excel 地標庫。
+- 匯入視窗會列出經緯度、離所選 GPX 的距離與是否會顯示；多條 GPX 可切換預覽。照片名稱預設使用原檔名，可按「修改名稱」調整卡片標題。
+- **沒有 GPS 的照片不會猜測位置**：清單會提示「無 GPS」，可按「設定／補上 GPS」輸入 `緯度, 經度`；未補座標的照片在產片時略過。照片須保留原始 EXIF；通訊軟體轉傳或截圖可能已移除定位。
+- GPS 照片與 Excel 地標可以同時使用；同一位置的多張照片依序顯示，每張停留時間共用「每張停留（秒）」。
+- 照片複本儲存在所選照片資料夾內的 `gps_imports/`，座標清單為 `gps_photos.json`，重新開啟程式後選同一資料夾即可繼續使用。原始照片不修改；相同內容重複匯入不會新增。照片與座標只在本機處理，HikeReel 不會上傳，也不會放入 GitHub Release。
 - GUI：按「🖼 管理地標照片…」，在每個地標旁「選擇照片…」，照片會複製到地標庫旁的 `landmark_photos` 資料夾（檔名＝地標名稱第一行）。
 - 也可以自己放：在 `landmark_photos` 資料夾放與地標同名的圖片（中文或外文那一行皆可），例如 `第一山屋.jpg`、`Rifugio Locatelli.jpg`；或在地標庫加一欄「**照片**」填檔案路徑。
 - 每張停留秒數預設 3 秒（建議 2.5～3.5 秒：2 秒來不及看完照片和名稱，超過 4 秒會拖節奏）。
-- 照片會依 EXIF 轉正、置中裁切成 4:3；支援 JPG / PNG / WebP / BMP，手機 HEIC 需另外安裝 `pillow-heif`。
+- 照片會依 EXIF 轉正、置中裁切成 4:3；支援 JPG / PNG / WebP / BMP / HEIC / HEIF，Windows 執行檔已包含 `pillow-heif`。
 - 只有找得到照片的地標才會停下來顯示照片。
+
+### 照片離軌跡多近才會出現？
+
+- **預設 0.5 km＝500 公尺**，沿用既有設定；主視窗「地標／照片半徑(km)」同時控制 Excel 地標與 GPS 照片。若定位偏差約數十公尺，可改成 `0.1`（100 m）或 `0.2`（200 m），避免混入其他行程的照片；若偏離超過門檻，可調大或修正座標。
+- v2.0.5 以前比對軌跡的取樣點；v2.1 改為到**軌跡線段**的最近平面距離，GPX 點位較疏時也能在中間路段配對。這不是與登山小人當下位置的即時觸發半徑；照片會排在該軌跡最接近的位置播放一次。
+- 比對使用照片拍攝位置，不是鏡頭中山峰的位置；不比較高度。環線、折返或交叉路段若有同樣接近的路段，採第一個最近位置，不依拍攝時間推測走路順序。
+- 照片停留時間會額外加入影片，並非包含在 3D「影片長度」內；每條批次 GPX 都會重新篩選照片。
 
 ---
 
@@ -177,7 +190,7 @@ python gpx_to_video.py your_track.gpx --title "路線名稱" --speed 15
 | `--speed` | 加速倍數 | 15 |
 | `--width` / `--height` | 解析度 | 720 / 1280 |
 | `--landmarks` | 地標資料庫路徑 | - |
-| `--radius` | 地標篩選半徑 (km) | 0.5 |
+| `--radius` | 地標到軌跡線段的篩選半徑 (km) | 0.5 |
 | `--no-basemap` | 不下載底圖 | - |
 | `--no-gpu` | 不使用 GPU | - |
 
@@ -191,7 +204,8 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線" 
 |---|---|---|
 | `--texture` | 貼圖：`esri`（需金鑰）、`topo`、`osm`、`s2-2016`、`s2-2024`（授權見下方） | topo |
 | `--seconds` | 影片長度（不含照片停留） | 30 |
-| `--photos` / `--photo-seconds` | 地標照片資料夾 / 每張停留秒數 | landmark_photos / 3 |
+| `--photos` / `--photo-seconds` | 地標／GPS 照片資料夾（含 gps_photos.json）/ 每張停留秒數 | landmark_photos / 3 |
+| `--radius` | 地標與 GPS 照片到軌跡的篩選半徑 (km) | 0.5＝500 m |
 | `--marker` | `hiker` 登山小人 / `dot` 紅點 | hiker |
 | `--exaggeration` | 地形高度誇張倍率 | 1.5 |
 | `--cam-dist` / `--pitch` / `--shift` | 鏡頭距離 / 俯角 / 畫面垂直偏移 | 自動 |
@@ -279,7 +293,7 @@ HikeReel 是用 PyInstaller 打包的 Windows 程式，目前**沒有程式碼�
 - HikeReel 是開源專案，原始碼公開在本儲存庫；Release 的 zip 是由 [GitHub Actions](https://github.com/skypray73/HikeReel/actions) 依原始碼自動建置，Release 說明最後附有 zip 的 **SHA-256**，可核對下載的檔案沒有被更換：
 
   ```
-  Get-FileHash HikeReel_v2.0.5_Windows.zip -Algorithm SHA256
+  Get-FileHash HikeReel_v2.1.0_Windows.zip -Algorithm SHA256
   ```
 
 - 不放心也可以不用 exe，改從原始碼執行（見上方「從原始碼執行」）。
@@ -332,6 +346,7 @@ GPX 軌跡、地標資料庫與地標照片的版權屬於原作者，請確認�
 | Matplotlib | Matplotlib License（PSF-based） |
 | OpenCV（opencv-python） | Apache-2.0 |
 | Pillow | MIT-CMU |
+| pillow-heif | BSD-3-Clause（HEIC/HEIF 解碼器依套件隨附授權） |
 | gpxpy | Apache-2.0 |
 | contextily | BSD-3-Clause |
 | pyproj | MIT |

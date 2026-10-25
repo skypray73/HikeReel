@@ -25,8 +25,8 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-APP_VERSION = "2.0.5"
-RELEASE_DATE = "2026/10/21"
+APP_VERSION = "2.1.0"
+RELEASE_DATE = "2026/10/25"
 
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"
 TEXT, DIM, SUCCESS, GOLD, DARK2 = "#eaeaea", "#888899", "#00e676", "#ffc864", "#0f1932"
@@ -235,7 +235,7 @@ class App:
         self._btn(r4, "設定 ArcGIS 金鑰", self._key_dialog).pack(side="left", padx=8)
 
         # ④ 地標照片
-        self._sec(f, "④ 地標照片（2D、3D 都適用；沒有照片的地標不顯示、不停留）")
+        self._sec(f, "④ 地標／GPS 照片（2D、3D 都適用）")
         r5 = tk.Frame(f, bg=BG); r5.pack(fill="x", padx=20, pady=5)
         tk.Entry(r5, textvariable=self.photo_dir_var, bg=PANEL, fg=TEXT,
                  insertbackground=TEXT, relief="flat",
@@ -249,6 +249,10 @@ class App:
                  relief="flat", font=("Consolas", 12), width=5).pack(side="left", padx=6)
         tk.Label(r6, text="建議 2.5～3.5", bg=BG, fg=DIM,
                  font=("Microsoft JhengHei UI", 9)).pack(side="left")
+        r7 = tk.Frame(f, bg=BG); r7.pack(fill="x", padx=20, pady=(2,4))
+        self._btn(r7, "📍 匯入 GPS 照片…", self._gps_photo_dialog).pack(side="left")
+        tk.Label(r7, text="自動讀取照片定位；無 GPS 可手動補座標，不需要 Excel",
+                 bg=BG, fg=DIM, font=("Microsoft JhengHei UI", 9)).pack(side="left", padx=8)
 
         # ⑤ 設定
         self._sec(f, "⑤ 設定")
@@ -264,7 +268,7 @@ class App:
         res_menu.grid(row=0, column=1, columnspan=2, sticky="w", padx=8, pady=6)
 
         self._prow(pf, "加速倍數（2D）",  self.speed_var,  "推薦 10~20", 1)
-        self._prow(pf, "地標篩選半徑(km)", self.radius_var, "預設 0.5", 2)
+        self._prow(pf, "地標／照片半徑(km)", self.radius_var, "預設 0.5＝500 m；GPS 偏移可調整", 2)
 
         # 大顆勾選框（自繪，明顯）
         cb = tk.Frame(pf, bg=PANEL); cb.grid(row=3, column=0, columnspan=3,
@@ -376,6 +380,10 @@ class App:
         return result["ok"] or bool(t3.arcgis_key())
 
     # ── 地標照片 ──────────────────────────────────────────────
+    def _gps_photo_dialog(self):
+        from gps_photo_dialog import show_dialog
+        show_dialog(self)
+
     def _pick_photo_dir(self):
         d = filedialog.askdirectory(title="選擇地標照片資料夾")
         if d:
@@ -586,6 +594,17 @@ class App:
         if self.running:
             messagebox.showinfo("提示", "正在產生中，請稍候…")
             return
+        try:
+            import math
+            radius = float(self.radius_var.get() or "0.5")
+            seconds = float(self.photo_sec_var.get() or "3")
+            if not math.isfinite(radius) or radius < 0:
+                raise ValueError("篩選半徑必須大於或等於 0（單位：公里）")
+            if not math.isfinite(seconds) or seconds <= 0:
+                raise ValueError("照片停留秒數必須大於 0")
+        except ValueError as ex:
+            messagebox.showerror("設定錯誤", str(ex))
+            return
         self.running = True
         self.prog["value"] = 0
         self.prog_label.config(text="準備中…")
@@ -681,6 +700,7 @@ class App:
     def _make_one_2d(self, gpx, title="", file_idx=1, file_total=1):
         import gpx_to_video as gv
         import landmark_photos as lp
+        import photo_gps as gps
         import cv2, numpy as np
         import shutil as sh, subprocess as sp, time as tm
 
@@ -694,6 +714,7 @@ class App:
         data["track_name"] = title if title else \
             os.path.splitext(os.path.basename(gpx))[0]
 
+        gv.WAYPOINTS = []  # Batch routes must not inherit another route's landmarks.
         if lm and os.path.exists(lm):
             gv.WAYPOINTS = gv.load_landmarks(lm, radius,
                                               data["lats"], data["lons"])
@@ -754,13 +775,20 @@ class App:
             ph = lp.find_photo(name, table, folder)
             if not ph:
                 continue
-            near = int(np.argmin((lat_a - wlat) ** 2 + ((lon_a - wlon) * np.cos(np.radians(wlat))) ** 2))
+            near, _offset = gps.nearest_route_position(wlat, wlon, lat_a, lon_a)
             try:
                 card = lp.PhotoCard(ph, name, W, H, min(W, H) / 720, gv.PIL_FONT)
             except Exception as ex:
                 self._append(f"   ⚠️ 照片無法開啟：{ph}（{ex}）", "#ffaa44")
                 continue
             holds.append((float(near), hold_n, card))
+        if folder:
+            for photo in gps.match_photos(folder, lat_a, lon_a, radius, self._append):
+                try:
+                    card = lp.PhotoCard(photo["path"], photo["name"], W, H, min(W, H) / 720, gv.PIL_FONT)
+                    holds.append((photo["near"], hold_n, card))
+                except Exception as ex:
+                    self._append(f"   ⚠️ 照片無法開啟：{photo['name']}（{ex}）", "#ffaa44")
         if holds:
             self._append(f"   🖼️ 地標照片：{len(holds)} 張", TEXT)
         sched, ranges = lp.build_schedule(float(n - 1), total, holds)

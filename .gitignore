@@ -14,6 +14,11 @@ __pycache__/
 *.avi
 *.mov
 
+# 使用者照片與 GPS 清單（只留在本機，不上傳）
+landmark_photos/
+gps_imports/
+gps_photos.json
+
 # 個人 GPX（含位置資訊，不上傳）
 *.gpx
 

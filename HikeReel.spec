@@ -6,7 +6,8 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 datas = []
 binaries = []
 hiddenimports = [
-    'gpx_to_video', 'terrain3d', 'landmark_photos', 'ffmpeg_download',
+    'gpx_to_video', 'terrain3d', 'landmark_photos', 'photo_gps', 'gps_photo_dialog', 'ffmpeg_download',
+    'pillow_heif',
     'pyproj.datadir', 'certifi', 'truststore', 'gpxpy', 'gpxpy.gpx', 'openpyxl',
     'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont', 'PIL.ImageOps', 'PIL.ImageTk',
     'matplotlib', 'matplotlib.pyplot', 'matplotlib.font_manager', 'matplotlib.collections', 'numpy',
@@ -17,6 +18,9 @@ for pkg in ('contextily', 'pyproj', 'rasterio', 'pyvista'):
 for pkg in ('cv2', 'contextily', 'pyproj', 'rasterio', 'mercantile', 'xyzservices', 'certifi'):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hiddenimports += h
+# HEIC / HEIF phone photos: include the native decoder in Windows releases.
+d, b, h = collect_all('pillow_heif')
+datas += d; binaries += b; hiddenimports += h
 # PyVista：收所有子模組，但略過網頁/筆記本/範例下載這些 HikeReel 用不到的部分
 hiddenimports += [m for m in collect_submodules('pyvista')
                   if not any(x in m for x in ('trame', 'jupyter', 'examples', 'ext.downloads'))]
