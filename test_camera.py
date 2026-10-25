@@ -27,13 +27,32 @@ def follow(scene, **kwargs):
 
 
 class CameraTests(unittest.TestCase):
-    def test_flat_route_follows_from_behind_and_above_with_three_degree_upward_view(self):
+    def test_flat_route_follows_from_behind_and_above_with_slight_downward_view(self):
         cam, focal, _, moving, target, _ = follow(scene_for(np.linspace(0, 6000, 301)))
         self.assertTrue(np.all(cam[moving, 0] < target[moving, 0]))
         self.assertTrue(np.all(cam[moving, 2] > target[moving, 2]))
         v = focal - cam
         angle = np.degrees(np.arctan2(v[:, 2], np.linalg.norm(v[:, :2], axis=1)))
-        np.testing.assert_allclose(angle[moving], 3, atol=1e-8)
+        np.testing.assert_allclose(angle[moving], -5, atol=1e-8)
+
+    def test_camera_swings_around_and_changes_height_while_following(self):
+        cam, _, _, moving, target, _ = follow(scene_for(np.linspace(0, 6000, 301)))
+        rel = cam[moving] - target[moving]
+        side = np.degrees(np.arctan2(rel[:, 1], -rel[:, 0]))
+        elevation = np.degrees(np.arctan2(rel[:, 2], np.linalg.norm(rel[:, :2], axis=1)))
+        self.assertLess(side.min(), -10)
+        self.assertGreater(side.max(), 10)
+        self.assertLess(np.abs(side).max(), 30)
+        self.assertGreater(elevation.min(), 6)
+        self.assertLess(elevation.max(), 25)
+        self.assertGreater(np.ptp(elevation), 5)
+        # 緩慢變化：相鄰幀的方位角變化不超過 1°
+        self.assertLess(np.abs(np.diff(side)).max(), 1.0)
+
+    def test_zero_orbit_stays_directly_behind(self):
+        cam, _, back, moving, target, _ = follow(scene_for(np.linspace(0, 6000, 301)), orbit=0)
+        side = np.degrees(np.arctan2(cam[moving, 1] - target[moving, 1], target[moving, 0] - cam[moving, 0]))
+        self.assertLess(np.abs(side).max(), 1.0)
 
     def test_short_route_keeps_hiker_and_dot_above_the_hud_in_both_formats(self):
         for aspect in (9 / 16, 16 / 9):
@@ -69,7 +88,8 @@ class CameraTests(unittest.TestCase):
     def test_manual_level_or_downward_angle_is_respected(self):
         scene = scene_for(np.linspace(0, 6000, 301))
         for look_up in (0, -10):
-            cam, focal, _, moving, _, _ = follow(scene, look_up=look_up)
+            # 高度低到小人仍在畫面內時，不應自動改動指定的角度
+            cam, focal, _, moving, _, _ = follow(scene, look_up=look_up, pitch=0.10)
             v = focal - cam
             angle = np.degrees(np.arctan2(v[:, 2], np.linalg.norm(v[:, :2], axis=1)))
             np.testing.assert_allclose(angle[moving], look_up, atol=1e-8)

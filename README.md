@@ -1,4 +1,4 @@
-# HikeReel v2.1.2
+# HikeReel v2.1.3
 
 **HikeReel** 把 GPX 健行軌跡轉換成動態影片，適合上傳 YouTube Shorts、Instagram Reels 或 YouTube。
 
@@ -13,10 +13,10 @@
 
 **[➡️ 前往下載頁面（Releases）](https://github.com/skypray73/HikeReel/releases/latest)**
 
-下載 `HikeReel_v2.1.2_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
+下載 `HikeReel_v2.1.3_Windows.zip`，**整個解壓縮**後執行資料夾裡的 `HikeReel.exe`：
 
 ```
-HikeReel_v2.1.2/
+HikeReel_v2.1.3/
 ├─ HikeReel.exe         主程式
 ├─ _internal/           程式需要的套件（不要刪除或移動）
 ├─ locationGPS.xlsx     地標資料庫範本
@@ -24,7 +24,7 @@ HikeReel_v2.1.2/
 └─ README.txt           簡易說明
 ```
 
-> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.1.2`）。
+> - 請把整個資料夾放在**純英文路徑**（例如 `D:\HikeReel_v2.1.3`）。
 > - 建議另外安裝 ffmpeg（見下方說明），影片品質與相容性較好。
 > - 執行檔沒有程式碼簽章，Windows SmartScreen 可能出現警告，請按「其他資訊」→「仍要執行」。
 > - 防毒軟體（例如 Norton）可能把它誤判為「未知／高風險檔案」，說明與回報方式見下方「🛡️ 防毒軟體誤判說明與回報」。
@@ -98,8 +98,8 @@ HikeReel_v2.1.2/
 
 其他 3D 細節：
 - 地形高程來自 [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)，主地形外再加一圈約 4 倍範圍的低解析地形，遠處逐漸融入天空。
-- 鏡頭從小人**後上方低空跟隨，視線預設向上 3°**，讓前方群山與天際線入鏡。後方山坡擋住時先平順拉近，必要時升高、調低仰角，保留小人在畫面下半部、高度剖面上方。
-- 跟隨高度比預設為 `0.10`（原為 `0.42`）；低解析 Sentinel-2 仍保持較遠距離，但也採用低空山景視角。命令列可用 `--look-up 0` 改成平視，或負值改成俯視。
+- 鏡頭從小人**後上方斜角跟隨（約 11°～20° 之間緩慢起伏），視線微俯 5°**，同時看得到小人、腳下地形與前方山稜天際線。鏡頭也會依走過的路程**左右繞行最多約 25°**，約 16 秒一輪，讓畫面有視角變化；停下看照片時鏡頭跟著靜止。後方山坡擋住時先平順拉近，必要時升高、調低視線，保留小人在畫面下半部、高度剖面上方。
+- 跟隨高度比預設為 `0.28`（v2.1.2 為 `0.10`、更早為 `0.42`）；低解析 Sentinel-2 仍保持較遠距離。命令列可用 `--look-up` 調整視線角度（正值仰視、負值俯視），`--orbit 0` 關閉左右繞行與高度起伏。
 - 鏡頭跟著平滑過的路線、轉向速度有上限（每秒 20°），讓急轉彎與之字形路段的轉向較平順。
 - 開場從整條路線的總覽降到小人身後；結尾在小人抵達終點、停下後，鏡頭才慢慢拉遠約 4 秒（`--outro-seconds`），呈現整段軌跡與最終數據。
 - 儀表板（距離 / 海拔 / 上坡 / 下坡）與高度剖面沿用 2D 模式的配色與版型，底色為半透明。版面也依 2D 的比例配置：**橫式**縮成左下角一塊（約 1/3 寬）；**直式**數字列在最上方、高度剖面在最底部，合計約 28% 高度，中間留給 3D 畫面。
@@ -212,8 +212,9 @@ python terrain3d.py examples/Tre_Cime_di_Lavaredo.gpx --title "三尖峰環線" 
 | `--marker` | `hiker` 登山小人 / `dot` 紅點 | hiker |
 | `--exaggeration` | 地形高度誇張倍率 | 1.5 |
 | `--cam-dist` | 跟隨距離倍率；遇山坡遮擋會自動拉近 | 0.6（Sentinel-2 為 2.2） |
-| `--pitch` | 跟隨鏡頭高度／距離比 | 0.10 |
-| `--look-up` | 視線仰角（度）；0 為平視、負值為俯視，必要時自動調低以保留小人 | 3 |
+| `--pitch` | 跟隨鏡頭高度／距離比 | 0.28 |
+| `--look-up` | 視線仰角（度）；0 為平視、負值為俯視，必要時自動調低以保留小人 | -5 |
+| `--orbit` | 鏡頭左右繞行最大角度（度），高度也隨之起伏；0 為固定在正後方 | 25 |
 | `--shift` | 畫面垂直偏移 | -0.15 |
 | `--no-outer` / `--no-haze` | 不加外圍地形 / 不加遠景霧化 | - |
 
@@ -299,7 +300,7 @@ HikeReel 是用 PyInstaller 打包的 Windows 程式，目前**沒有程式碼�
 - HikeReel 是開源專案，原始碼公開在本儲存庫；Release 的 zip 是由 [GitHub Actions](https://github.com/skypray73/HikeReel/actions) 依原始碼自動建置，Release 說明最後附有 zip 的 **SHA-256**，可核對下載的檔案沒有被更換：
 
   ```
-  Get-FileHash HikeReel_v2.1.2_Windows.zip -Algorithm SHA256
+  Get-FileHash HikeReel_v2.1.3_Windows.zip -Algorithm SHA256
   ```
 
 - 不放心也可以不用 exe，改從原始碼執行（見上方「從原始碼執行」）。

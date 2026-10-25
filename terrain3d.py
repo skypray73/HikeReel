@@ -436,11 +436,12 @@ def hiker_size(back):
     return max(10.0, back * 0.04)
 
 
-def camera_path(scene, s, fps, pitch=0.10, dist=0.6, n_outro=None, aspect=16 / 9,
-                fov=50.0, look_up=3.0, shift=-0.15, marker="hiker"):
-    """開場總覽 → 後上方低空跟隨、微仰視山景 → 結尾拉回總覽。
+def camera_path(scene, s, fps, pitch=0.28, dist=0.6, n_outro=None, aspect=16 / 9,
+                fov=50.0, look_up=-5.0, shift=-0.15, marker="hiker", orbit=25.0):
+    """開場總覽 → 後上方斜角跟隨、帶入前方山景 → 結尾拉回總覽。
 
-    pitch 是跟隨高度／距離比；look_up 是相對水平線的仰角（度）。
+    pitch 是跟隨高度／距離比；look_up 是相對水平線的仰角（度，負值為俯視）。
+    orbit 是鏡頭繞小人左右擺動的最大角度（度）；高度也隨之緩慢起伏，0 則固定在正後方。
     山坡迫使相機升高時，降低仰角以保留畫面下半部的移動點。
     """
     P = np.c_[scene.tx, scene.ty, scene.tz]
@@ -489,6 +490,19 @@ def camera_path(scene, s, fps, pitch=0.10, dist=0.6, n_outro=None, aspect=16 / 9
     hy = gaussian(hy[:, None], fps * 0.5)[:, 0]
     hd = np.c_[np.cos(hy), np.sin(hy)]
     fpm = frames / max(L, 1.0)                           # 每公尺路線對應幾幀：平滑以「距離」計算，影片長短不影響追蹤
+    moving_steps = np.diff(s)
+    moving_steps = moving_steps[moving_steps > 0]
+    step_per_frame = float(np.median(moving_steps)) if len(moving_steps) else 2.0
+
+    # 視角變化：依「走過的路程」緩慢左右繞行並起伏高度（約 16 秒一輪），
+    # 停下看照片時路程不變，鏡頭也跟著靜止。兩個不成整數比的週期疊加，避免來回擺得像鐘擺。
+    swing = min(1.0, abs(orbit) / 25.0)
+    lam = max(step_per_frame * fps * 16, back * 3)
+    ph = 2 * math.pi * s / lam
+    yaw = math.radians(orbit) * (0.7 * np.sin(ph) + 0.3 * np.sin(ph / 0.43 + 1.1))
+    pitch_f = pitch * (1 + 0.3 * swing * np.sin(ph / 1.6 + 0.6))
+    c, sn = np.cos(yaw), np.sin(yaw)
+    hd = np.c_[hd[:, 0] * c - hd[:, 1] * sn, hd[:, 0] * sn + hd[:, 1] * c]
     sig = float(np.clip(back * 0.5 * fpm, fps * 0.6, fps * 1.5))
 
     def env(v, w, sg):                                   # 往上包絡再平滑：保證夠高，又不會一格一格跳
@@ -522,7 +536,7 @@ def camera_path(scene, s, fps, pitch=0.10, dist=0.6, n_outro=None, aspect=16 / 9
         distance = min(back, max(90.0, back * factor))
         xy = here[:, :2] - hd * distance
         clearance = min(25 * scene.ex, max(8 * scene.ex, distance * 0.08))
-        z = np.maximum(ground_z + distance * pitch + min(8 * scene.ex, distance * 0.10),
+        z = np.maximum(ground_z + distance * pitch_f + min(8 * scene.ex, distance * 0.10),
                        required_height(xy, clearance))
         depression = np.arctan2(z - framing_z, np.linalg.norm(target[:, :2] - xy, axis=1))
         choose = ~found & (depression < best)
@@ -531,12 +545,9 @@ def camera_path(scene, s, fps, pitch=0.10, dist=0.6, n_outro=None, aspect=16 / 9
     follow_back = -env(-follow_back, fps * 0.6, fps * 0.4)
     cam = here.copy()
     cam[:, :2] = here[:, :2] - hd * follow_back[:, None]
-    cam[:, 2] = ground_z + follow_back * pitch + np.minimum(8 * scene.ex, follow_back * 0.10)
+    cam[:, 2] = ground_z + follow_back * pitch_f + np.minimum(8 * scene.ex, follow_back * 0.10)
     # 高度按約 25 m 路程平滑；不可用一整秒的未來最高地形，否則影片越快，
     # 就越容易提前升到遠處山脊上方，造成不必要的俯瞰。
-    moving_steps = np.diff(s)
-    moving_steps = moving_steps[moving_steps > 0]
-    step_per_frame = float(np.median(moving_steps)) if len(moving_steps) else 2.0
     vertical_sigma = float(np.clip(25.0 / step_per_frame, 1, max(1, fps * 0.35)))
     cam[:, :2] = gaussian(cam[:, :2], sig)
     cam[:, 2] = gaussian(cam[:, 2:3], vertical_sigma)[:, 0]
@@ -550,7 +561,7 @@ def camera_path(scene, s, fps, pitch=0.10, dist=0.6, n_outro=None, aspect=16 / 9
     need = np.maximum(0, required_height(cam[:, :2], clearance) - cam[:, 2])
     cam[:, 2] += env(need, vertical_sigma * 2, vertical_sigma)
 
-    # 對準前方天際線，而非低頭看地面。保留小人在高度剖面上方；陡坡或
+    # 微微俯視前方，同時帶入遠方山稜與天際線。保留小人在高度剖面上方；陡坡或
     # 山脊遮擋時允許暫時降低視線，不為了固定仰角而把小人裁出畫面。
     forward = target[:, :2] - cam[:, :2]
     horizontal = np.linalg.norm(forward, axis=1)
@@ -964,7 +975,7 @@ def render(args, progress=None):
     frames_move = max(120, int(args.seconds * args.fps))
     sat = args.texture.startswith("s2")                     # 10 m 衛星：鏡頭拉遠；Esri 高解析可以拉近
     dist = args.cam_dist if args.cam_dist is not None else (2.2 if sat else 0.6)     # 衛星影像 10 m 解析度，遠一點比較清楚
-    pitch = args.pitch if args.pitch is not None else 0.10
+    pitch = args.pitch if args.pitch is not None else 0.28
     lm = None
     lm_path = args.landmarks
     if lm_path is None:                                          # 預設：程式旁的 locationGPS.xlsx
@@ -1013,7 +1024,8 @@ def render(args, progress=None):
     frames = len(s_sched)
     cam, focal, s, back, ow = camera_path(scene, s_sched, args.fps, pitch, dist,
                                           n_outro=n_outro, aspect=W / H, fov=args.fov,
-                                          look_up=args.look_up, shift=args.shift, marker=args.marker)
+                                          look_up=args.look_up, shift=args.shift, marker=args.marker,
+                                          orbit=args.orbit)
     idx_f = np.interp(s, data["dists"] * 1000.0, np.arange(n))
     photo_at = {}
     hold_w = np.zeros(frames)
@@ -1186,9 +1198,11 @@ def build_parser():
     ap.add_argument("--height", type=int, default=1280)
     ap.add_argument("--fov", type=float, default=50)
     ap.add_argument("--shift", type=float, default=-0.15, help="畫面垂直偏移（-1~1）")
-    ap.add_argument("--pitch", type=float, default=None, help="跟隨鏡頭高度／距離比（預設 0.10；越大越高）")
-    ap.add_argument("--look-up", type=float, default=3.0,
-                    help="跟隨視線相對水平線的仰角（度，預設 3；0 為平視，負值為俯視）；陡坡時自動調低以保留小人")
+    ap.add_argument("--pitch", type=float, default=None, help="跟隨鏡頭高度／距離比（預設 0.28；越大越高）")
+    ap.add_argument("--look-up", type=float, default=-5.0,
+                    help="跟隨視線相對水平線的仰角（度，預設 -5 微俯視；0 為平視）；陡坡時自動調低以保留小人")
+    ap.add_argument("--orbit", type=float, default=25.0,
+                    help="鏡頭左右繞行的最大角度（度，預設 25），高度也隨之起伏；0 為固定在正後方")
     ap.add_argument("--cam-dist", type=float, default=None, help="跟隨鏡頭距離倍率（預設 0.6，Sentinel-2 衛星 2.2）")
     ap.add_argument("--line-width", type=float, default=7)
     ap.add_argument("--no-gpu", action="store_true")
