@@ -28,7 +28,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
-      - name: Build (onedir)
+      - name: Test photo GPS and route matching
+        run: python -m unittest discover -p "test_*.py" -v
+
+      - name: Build Windows executable (onedir)
         run: pyinstaller --noconfirm HikeReel.spec
 
       - name: Package zip
