@@ -431,15 +431,27 @@ def gaussian(a, sigma):
     return np.stack([np.convolve(pad[:, i], k, mode="valid") for i in range(a.shape[1])], axis=1)
 
 
-def camera_path(scene, s, fps, pitch=0.85, dist=1.0, n_outro=None, aspect=16 / 9, fov=50.0):
-    """回傳每幀的 (相機位置, 焦點)：開場俯瞰 → 跟隨飛行 → 結尾拉高俯瞰。"""
+def hiker_size(back):
+    """小人隨跟隨距離縮放；短路線也不會佔滿畫面。"""
+    return max(4.0, back * 0.04)
+
+
+def camera_path(scene, s, fps, pitch=0.10, dist=0.6, n_outro=None, aspect=16 / 9,
+                fov=50.0, look_up=3.0, shift=-0.15, marker="hiker"):
+    """開場總覽 → 後上方低空跟隨、微仰視山景 → 結尾拉回總覽。
+
+    pitch 是跟隨高度／距離比；look_up 是相對水平線的仰角（度）。
+    山坡迫使相機升高時，降低仰角以保留畫面下半部的移動點。
+    """
     P = np.c_[scene.tx, scene.ty, scene.tz]
     d = scene.data["dists"] * 1000.0
     L = float(d[-1])
     ext = float(max(np.ptp(scene.tx), np.ptp(scene.ty), 1.0))
     back = float(np.clip(L * 0.10, 150, 1800)) * dist
-    ahead = back * 0.15                                  # 注視點鎖定目前位置：小人固定在畫面中段（地平線靠較低的鏡頭角度帶出來）
-    hgt = back * pitch + 40 * scene.ex                   # pitch 越小越水平，越能看出地形起伏
+    # 避山與構圖使用真正的小人位置；平滑後的路線可能切進山坡，不能當成視線終點。
+    target = np.stack([np.interp(s, d, P[:, i]) for i in range(3)], axis=1)
+    target_lift = hiker_size(back) if marker == "hiker" else max(6.0, back * 0.022) * 0.8
+    target[:, 2] += target_lift
 
     # 鏡頭跟著「平滑過的路線」走：GPS 軌跡本身有小抖動，直接跟會讓畫面晃
     step = 2.0
@@ -465,7 +477,6 @@ def camera_path(scene, s, fps, pitch=0.85, dist=1.0, n_outro=None, aspect=16 / 9
 
     s = np.asarray(s, float)
     frames = len(s)
-    focal = P_at(s + ahead)
     # 鏡頭放在「平滑後的行進方向」正後方。不用「路線往回 N 公尺的點」，否則之字形折返時鏡頭會跑到小人前面回頭看
     here = P_at(s)
     hd = P_at(s + back * 0.6)[:, :2] - P_at(s - back * 0.6)[:, :2]
@@ -477,33 +488,80 @@ def camera_path(scene, s, fps, pitch=0.85, dist=1.0, n_outro=None, aspect=16 / 9
         hy[i] = hy[i - 1] + np.clip(hy[i] - hy[i - 1], -lim, lim)
     hy = gaussian(hy[:, None], fps * 0.5)[:, 0]
     hd = np.c_[np.cos(hy), np.sin(hy)]
-    cam = here.copy()
-    cam[:, :2] = here[:, :2] - hd * back
-    cam[:, 2] = here[:, 2] + hgt
     fpm = frames / max(L, 1.0)                           # 每公尺路線對應幾幀：平滑以「距離」計算，影片長短不影響追蹤
     sig = float(np.clip(back * 0.5 * fpm, fps * 0.6, fps * 1.5))
-    cam, focal = gaussian(cam, sig), gaussian(focal, fps * 0.5)
 
     def env(v, w, sg):                                   # 往上包絡再平滑：保證夠高，又不會一格一格跳
+        required = np.asarray(v)
         w = max(1, int(w))
         v = np.array([v[max(0, i - w):i + w + 1].max() for i in range(len(v))])
-        return gaussian(v[:, None], max(1.0, sg))[:, 0]
+        return np.maximum(required, gaussian(v[:, None], max(1.0, sg))[:, 0])
 
-    floor_z = env(scene.terrain_at(cam[:, 0], cam[:, 1]) + 60 * scene.ex, fps, fps * 0.8)
-    cam[:, 2] = gaussian(np.maximum(cam[:, 2], floor_z)[:, None], fps * 0.8)[:, 0]
+    lower_y = 0.70 if aspect <= 1 else 0.78
+    room = math.atan(max(0.05, 2 * lower_y - 1 - shift) * math.tan(math.radians(fov) / 2))
+    ts = np.linspace(0.04, 0.9, 40)
+
+    def required_height(xy, clearance):
+        # 直接解出能跨過山坡、看見小人上半身所需的最低相機高度。
+        lx = xy[:, None, 0] * (1 - ts) + target[:, None, 0] * ts
+        ly = xy[:, None, 1] * (1 - ts) + target[:, None, 1] * ts
+        terr = scene.terrain_at(lx.ravel(), ly.ravel()).reshape(lx.shape)
+        terr += 20 * scene.ex * (1 - ts)
+        sight_z = np.max((terr - target[:, None, 2] * ts) / (1 - ts), axis=1)
+        return np.maximum(scene.terrain_at(xy[:, 0], xy[:, 1]) + clearance, sight_z)
+
+    # 後方山坡擋住時先拉近，避免只靠拉高而又變成俯瞰。最短保持原距離
+    # 的 45%（且至少 90 m），仍有遮擋時才升高並調低仰角。
+    follow_back = np.full(frames, back)
+    best = np.full(frames, np.inf)
+    found = np.zeros(frames, dtype=bool)
+    preferred = room - math.radians(look_up + 1)
+    ground_z = target[:, 2] - target_lift
+    framing_z = ground_z if marker == "hiker" else ground_z - max(6.0, back * 0.022) * 0.2
+    for factor in (1.0, 0.8, 0.6, 0.45):
+        distance = min(back, max(90.0, back * factor))
+        xy = here[:, :2] - hd * distance
+        clearance = min(25 * scene.ex, max(8 * scene.ex, distance * 0.08))
+        z = np.maximum(ground_z + distance * pitch + min(8 * scene.ex, distance * 0.10),
+                       required_height(xy, clearance))
+        depression = np.arctan2(z - framing_z, np.linalg.norm(target[:, :2] - xy, axis=1))
+        choose = ~found & (depression < best)
+        follow_back[choose], best[choose] = distance, depression[choose]
+        found |= depression <= preferred
+    follow_back = -env(-follow_back, fps * 0.6, fps * 0.4)
+    cam = here.copy()
+    cam[:, :2] = here[:, :2] - hd * follow_back[:, None]
+    cam[:, 2] = ground_z + follow_back * pitch + np.minimum(8 * scene.ex, follow_back * 0.10)
+    # 高度按約 25 m 路程平滑；不可用一整秒的未來最高地形，否則影片越快，
+    # 就越容易提前升到遠處山脊上方，造成不必要的俯瞰。
+    moving_steps = np.diff(s)
+    moving_steps = moving_steps[moving_steps > 0]
+    step_per_frame = float(np.median(moving_steps)) if len(moving_steps) else 2.0
+    vertical_sigma = float(np.clip(25.0 / step_per_frame, 1, max(1, fps * 0.35)))
+    cam[:, :2] = gaussian(cam[:, :2], sig)
+    cam[:, 2] = gaussian(cam[:, 2:3], vertical_sigma)[:, 0]
+    clearance = np.minimum(25 * scene.ex, np.maximum(8 * scene.ex, follow_back * 0.08))
+    minimum_z = np.maximum(scene.terrain_at(cam[:, 0], cam[:, 1]) + clearance,
+                           target[:, 2] + min(6 * scene.ex, back * 0.04))
+    floor_z = env(minimum_z, vertical_sigma * 2, vertical_sigma)
     cam[:, 2] = np.maximum(cam[:, 2], floor_z)
 
     # 視線遮擋：鏡頭 → 目前位置 之間若有山擋住，就把鏡頭拉高到看得見
-    tgt = P_at(s)
-    tgt[:, 2] += 10 * scene.ex
-    ts = np.linspace(0.04, 0.9, 40)
-    lx = cam[:, None, 0] * (1 - ts) + tgt[:, None, 0] * ts
-    ly = cam[:, None, 1] * (1 - ts) + tgt[:, None, 1] * ts
-    lz = cam[:, None, 2] * (1 - ts) + tgt[:, None, 2] * ts
-    margin = 20 * scene.ex * (1 - ts)                    # 安全距離越接近目前位置越小，否則一直被判定「被擋住」而把鏡頭拉太高
-    terr = scene.terrain_at(lx.ravel(), ly.ravel()).reshape(lx.shape) + margin
-    need = np.max(np.maximum(0, terr - lz) / (1 - ts), axis=1)          # 鏡頭需要抬高多少
-    cam[:, 2] += env(need, max(sig * 1.5, fps * 1.2), max(sig, fps * 0.8))
+    need = np.maximum(0, required_height(cam[:, :2], clearance) - cam[:, 2])
+    cam[:, 2] += env(need, vertical_sigma * 2, vertical_sigma)
+
+    # 對準前方天際線，而非低頭看地面。保留小人在高度剖面上方；陡坡或
+    # 山脊遮擋時允許暫時降低視線，不為了固定仰角而把小人裁出畫面。
+    forward = target[:, :2] - cam[:, :2]
+    horizontal = np.linalg.norm(forward, axis=1)
+    forward /= np.maximum(horizontal[:, None], 1e-6)
+    target_angle = np.arctan2(framing_z - cam[:, 2], horizontal)
+    ceiling = target_angle + room
+    tilt = np.minimum(math.radians(look_up), np.minimum(ceiling, gaussian(ceiling[:, None], vertical_sigma)[:, 0]))
+    look_dist = np.maximum(horizontal, back)
+    focal = cam.copy()
+    focal[:, :2] += forward * look_dist[:, None]
+    focal[:, 2] += np.tan(tilt) * look_dist
 
     # 總覽鏡頭：從南方斜上方看，距離依畫面比例算好，讓整條路線完整入鏡
     center = np.array([(scene.tx.min() + scene.tx.max()) / 2, (scene.ty.min() + scene.ty.max()) / 2,
@@ -906,7 +964,7 @@ def render(args, progress=None):
     frames_move = max(120, int(args.seconds * args.fps))
     sat = args.texture.startswith("s2")                     # 10 m 衛星：鏡頭拉遠；Esri 高解析可以拉近
     dist = args.cam_dist if args.cam_dist is not None else (2.2 if sat else 0.6)     # 衛星影像 10 m 解析度，遠一點比較清楚
-    pitch = args.pitch if args.pitch is not None else (1.0 if sat else 0.42)
+    pitch = args.pitch if args.pitch is not None else 0.10
     lm = None
     lm_path = args.landmarks
     if lm_path is None:                                          # 預設：程式旁的 locationGPS.xlsx
@@ -954,7 +1012,8 @@ def render(args, progress=None):
     s_sched = np.concatenate([s_sched, np.full(n_pause + n_outro, s_sched[-1])])
     frames = len(s_sched)
     cam, focal, s, back, ow = camera_path(scene, s_sched, args.fps, pitch, dist,
-                                          n_outro=n_outro, aspect=W / H, fov=args.fov)
+                                          n_outro=n_outro, aspect=W / H, fov=args.fov,
+                                          look_up=args.look_up, shift=args.shift, marker=args.marker)
     idx_f = np.interp(s, data["dists"] * 1000.0, np.arange(n))
     photo_at = {}
     hold_w = np.zeros(frames)
@@ -994,7 +1053,7 @@ def render(args, progress=None):
     rad = max(6.0, back * 0.022)                         # 依鏡頭距離決定大小，拉遠時也看得到
     hiker = mact = hact = None
     if args.marker == "hiker":
-        hiker = Hiker(pl, pv, size=max(12.0, back * 0.06))
+        hiker = Hiker(pl, pv, size=hiker_size(back))
         # 行進方向：用前後各一小段的軌跡算朝向，再平滑，避免小人抖動
         hx = np.interp(s + 15, data["dists"] * 1000.0, scene.tx) - np.interp(s - 15, data["dists"] * 1000.0, scene.tx)
         hy = np.interp(s + 15, data["dists"] * 1000.0, scene.ty) - np.interp(s - 15, data["dists"] * 1000.0, scene.ty)
@@ -1057,13 +1116,13 @@ def render(args, progress=None):
             mp = (float(scene.tx[i]), float(scene.ty[i]), float(scene.tz[i] + rad * 0.8))
             mact.SetPosition(*mp)
             hact.SetPosition(*mp)
-        # 停留看照片時把畫面平順地移開，小人不被照片卡片擋住（橫式往左、直式往下）
+        # 照片卡片：橫式把小人移左；直式保留低角度的下半部構圖，避免再往下壓進高度圖。
         hw = hold_w[f]
         o = float(ow[f])                    # 開場/結尾總覽：把整段路線移到儀表板以外的空白區域
         if W > H:
             pl.camera.SetWindowCenter(0.32 * hw - 0.44 * o, args.shift - 0.06 * o)
         else:
-            pl.camera.SetWindowCenter(0.0, args.shift + 0.55 * hw - 0.3 * o)
+            pl.camera.SetWindowCenter(0.0, args.shift - 0.3 * o)
         pl.camera.position = tuple(cam[f])
         pl.camera.focal_point = tuple(focal[f])
         pl.camera.up = (0, 0, 1)
@@ -1127,7 +1186,9 @@ def build_parser():
     ap.add_argument("--height", type=int, default=1280)
     ap.add_argument("--fov", type=float, default=50)
     ap.add_argument("--shift", type=float, default=-0.15, help="畫面垂直偏移（-1~1）")
-    ap.add_argument("--pitch", type=float, default=None, help="跟隨鏡頭高度比（越大越俯視；預設 0.42，Sentinel-2 衛星 1.0）")
+    ap.add_argument("--pitch", type=float, default=None, help="跟隨鏡頭高度／距離比（預設 0.10；越大越高）")
+    ap.add_argument("--look-up", type=float, default=3.0,
+                    help="跟隨視線相對水平線的仰角（度，預設 3；0 為平視，負值為俯視）；陡坡時自動調低以保留小人")
     ap.add_argument("--cam-dist", type=float, default=None, help="跟隨鏡頭距離倍率（預設 0.6，Sentinel-2 衛星 2.2）")
     ap.add_argument("--line-width", type=float, default=7)
     ap.add_argument("--no-gpu", action="store_true")

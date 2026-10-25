@@ -25,7 +25,7 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.2"
 RELEASE_DATE = "2026/10/25"
 
 BG, PANEL, ACCENT = "#1a1a2e", "#16213e", "#e94560"
@@ -229,6 +229,8 @@ class App:
                  relief="flat", font=("Consolas", 12), width=6).pack(side="left", padx=8)
         tk.Label(r3, text="不含地標照片停留時間", bg=PANEL, fg=DIM,
                  font=("Microsoft JhengHei UI", 9)).pack(side="left")
+        tk.Label(self.f3d, text="鏡頭：後上方低空跟隨、微仰視山景；遇山坡自動拉近避擋",
+                 bg=PANEL, fg=DIM, font=("Microsoft JhengHei UI", 9)).pack(anchor="w", padx=14, pady=(0, 6))
         r4 = tk.Frame(self.f3d, bg=PANEL); r4.pack(fill="x", padx=14, pady=(0, 8))
         self.key_lbl = tk.Label(r4, text="", bg=PANEL, fg=DIM, font=("Microsoft JhengHei UI", 10))
         self.key_lbl.pack(side="left")
